@@ -48,10 +48,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🎯 **توصية Spirex AI**\n"
             "━━━━━━━━━━━━━━━━━━━\n"
             "🟢 **الاتجاه:** شراء (BUY)\n"
-            f"📍 **نقطة الدخول:** ${price}\n\n"
-            f"🎯 **الهدف الأول:** ${tp1}\n"
-            f"🚀 **الهدف الثاني:** ${tp2}\n"
-            f"🛑 **وقف الخسارة:** ${sl}"
+            f"4375 **نقطة الدخول:** ${price}\n\n"
+            f"4405 **الهدف الأول:** ${tp1}\n"
+            f"4435 **الهدف الثاني:** ${tp2}\n"
+            f"4345 **وقف الخسارة:** ${sl}"
         )
         await query.message.reply_text(msg, parse_mode="Markdown")
     elif query.data == "get_analysis":
