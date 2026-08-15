@@ -7,7 +7,7 @@ TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
 
 def get_gold_data():
     """جلب بيانات الذهب وتوليد إشارة"""
-    price = 2415.50 
+    price = 4375.63 
     atr = 12.0
     return {
         "price": price,
