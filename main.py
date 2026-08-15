@@ -22,13 +22,13 @@ threading.Thread(target=run_server, daemon=True).start()
 TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
 
 def generate_pro_signal():
-    """محرك التحليل الاحترافي للذهب"""
-    price = 2450.00 + random.uniform(-5, 5) 
+    """محرك التحليل الاحترافي للذهب بالسعر الصحيح"""
+    price = 4375.00 + random.uniform(-2, 2) # السعر يبدأ من السعر الواقعي للذهب
     entry = round(price, 2)
-    sl = round(entry - 8.0, 2)
-    tp1 = round(entry + 10.0, 2)
-    tp2 = round(entry + 20.0, 2)
-    tp3 = round(entry + 35.0, 2)
+    sl = round(entry - 12.0, 2)
+    tp1 = round(entry + 15.0, 2)
+    tp2 = round(entry + 30.0, 2)
+    tp3 = round(entry + 50.0, 2)
     
     return {
         "entry": entry,
@@ -70,9 +70,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚠️ التزم بإدارة المخاطر!"
         )
     elif query.data == "technical_analysis":
-        text = "📊 **التحليل الفني:**\nالمؤشرات تشير إلى زخم صعودي على فريم الـ 4 ساعات. استقرار فوق مستوى 2440 يعزز الشراء."
+        text = "📊 **التحليل الفني:**\nالمؤشرات تشير إلى زخم صعودي على فريم الـ 4 ساعات. استقرار فوق مستويات الدعم يعزز الشراء."
     elif query.data == "risk_calculator":
-        text = "🛡️ **الحاسبة:**\nحدد لوت 0.01 لكل 1000$ لضمان أمان رأس المال."
+        text = "🛡️ **الحاسبة:**\nحدد لوت 0.01 لكل 1000$ لضمان أمان رأس المال وتقلبات الذهب العالية."
     else:
         await start(update, context)
         return
