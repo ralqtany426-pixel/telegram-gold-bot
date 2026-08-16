@@ -104,7 +104,7 @@ def fetch_and_analyze_market():
             "high_volume": True
         }
 
-# --- دالة بناء رسالة التقرير ---
+# --- دالة بناء رسالة التقرير (المُعدلة صحيحة منطقياً) ---
 def build_signal_message(data):
     current_price = data["close"]
     rsi = data["rsi"]
@@ -115,14 +115,18 @@ def build_signal_message(data):
     high_vol = data["high_volume"]
 
     base_score = 88
+    
+    # التعديل الصحيح لمنطق الشراء والبيع:
     if trend == "BULLISH":
         direction = "شراء 🟢 (BUY)"
-        stop_loss = round(support - 3.0, 2)
-        take_profit = round(current_price + 20.0, 2)
+        # في الشراء: وقف الخسارة يجب أن يكون تحت سعر الدخول/الدعم، وهدف الربح فوقه
+        stop_loss = round(zero_lag - 15.0, 2)   # أقل من نقطة الدخول
+        take_profit = round(zero_lag + 25.0, 2) # أعلى من نقطة الدخول
     else:
         direction = "بيع 🔴 (SELL)"
-        stop_loss = round(resistance + 3.0, 2)
-        take_profit = round(current_price - 20.0, 2)
+        # في البيع: وقف الخسارة يجب أن يكون فوق سعر الدخول/المقاومة، وهدف الربح تحته
+        stop_loss = round(zero_lag + 15.0, 2)   # أعلى من نقطة الدخول
+        take_profit = round(zero_lag - 25.0, 2) # أقل من نقطة الدخول
 
     if high_vol: base_score += 4
     success_rate = min(base_score + random.randint(1, 3), 95)
@@ -134,8 +138,8 @@ def build_signal_message(data):
         f"🔸 **الزوج:** الذهب (XAU/USD)\n"
         f"🎯 **الاتجاه:** {direction}\n"
         f"💎 **نقطة الزيرو انعكاس (الدخول المثالي):** `{zero_lag}`\n"
-        f"🛑 **وقف الخسارة (SL):** {stop_loss}\n"
-        f"✅ **هدف الربح (TP):** {take_profit}\n\n"
+        f"🛑 **وقف الخسارة (SL):** `{stop_loss}`\n"
+        f"✅ **هدف الربح (TP):** `{take_profit}`\n\n"
         f"🛡️ **الدعم:** `{support}` | ⚔️ **المقاومة:** `{resistance}`\n"
         f"📈 **مؤشر RSI:** `{rsi}` | 📊 **الفوليوم:** `{'مرتفع 🔥' if high_vol else 'عادي'}`\n"
         f"📰 **حالة الأخبار الاقتصادية:** `مستقرة / ترقب للبيانات`\n"
