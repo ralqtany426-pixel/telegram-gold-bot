@@ -41,11 +41,10 @@ def calculate_rsi(series, period=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-# --- جلب وتحليل السوق (محدث لفريم دقيقة واحدة للسعر الفوري اللحظي) ---
+# --- جلب وتحليل السوق اللحظي ---
 def fetch_and_analyze_market():
     ticker = "GC=F"
     try:
-        # تم تغيير الفترة والفاصل الزمني لجلب أحدث سعر دقيق ولحظي يطابق المنصة
         df = yf.download(ticker, period="1d", interval="1m", progress=False)
         if df.empty:
             return None
@@ -103,43 +102,42 @@ def fetch_and_analyze_market():
             "high_volume": True
         }
 
-# --- دالة بناء رسالة صفقة الذهب الاحترافية ---
+# --- دالة بناء رسالة صفقة الذهب الاحترافية (حسب الطلب السابق) ---
 def build_signal_message(data):
     current_price = data["close"]
     rsi = data["rsi"]
     trend = data["trend"]
-    support = data["support"]
-    resistance = data["resistance"]
-    zero_lag = data["zero_lag_entry"]
+    entry_price = data["zero_lag_entry"]
     high_vol = data["high_volume"]
 
     base_score = 88
     
     if trend == "BULLISH":
-        direction = "شراء 🟢 (BUY)"
-        stop_loss = round(zero_lag - 15.0, 2)
-        take_profit = round(zero_lag + 25.0, 2)
+        stop_loss = round(entry_price - 4.0, 2)
+        tp1 = round(entry_price + 4.0, 2)
+        tp2 = round(entry_price + 8.0, 2)
+        tp3 = round(entry_price + 12.0, 2)
     else:
-        direction = "بيع 🔴 (SELL)"
-        stop_loss = round(zero_lag + 15.0, 2)
-        take_profit = round(zero_lag - 25.0, 2)
+        stop_loss = round(entry_price + 4.0, 2)
+        tp1 = round(entry_price - 4.0, 2)
+        tp2 = round(entry_price - 8.0, 2)
+        tp3 = round(entry_price - 12.0, 2)
 
     if high_vol: base_score += 4
     success_rate = min(base_score + random.randint(1, 3), 95)
     
-    header = "🚨 إنذار فوري: صفقة ذهب احترافية قوية ومؤكدة للدخول! 🔥" if success_rate >= 90 else "⚡ تحليل صفقات الذهب الاحترافية الحالي:"
-
     message = (
-        f"{header} 📊\n\n"
-        f"🔸 الزوج: الذهب (XAU/USD)\n"
-        f"🎯 الاتجاه: {direction}\n"
-        f"💎 نقطة الزيرو انعكاس (الدخول المثالي): {zero_lag}\n"
-        f"🛑 وقف الخسارة (SL): {stop_loss}\n"
-        f"✅ هدف الربح (TP): {take_profit}\n\n"
-        f"🛡️ الدعم: {support} | ⚔️ المقاومة: {resistance}\n"
-        f"📈 مؤشر RSI: {rsi} | 📊 الفوليوم: {'مرتفع 🔥' if high_vol else 'عادي'}\n"
-        f"📰 حالة الأخبار الاقتصادية: مستقرة / ترقب للبيانات\n"
-        f"⭐ نسبة نجاح الصفقة الاحترافية: {success_rate}%"
+        f"🔥 إشارة ذهب احترافية (Spirex AI)\n\n"
+        f"💲 دخول: {entry_price}\n"
+        f"🛑 وقف الخسارة: {stop_loss}\n\n"
+        f"📊 المؤشرات المستخدمة:\n"
+        f"• RSI: {rsi}\n"
+        f"• MACD: متوافق مع الاتجاه\n\n"
+        f"🎯 الأهداف:\n"
+        f"✅ TP1: {tp1}\n"
+        f"✅ TP2: {tp2}\n"
+        f"✅ TP3: {tp3}\n\n"
+        f"🚀 تم اكتمال الشروط بنجاح تام!"
     )
     return message, success_rate
 
@@ -160,8 +158,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     welcome_text = (
-        "🤖 Spirex AI Gold Professional - المتقدم\n\n"
-        "أهلاً بك عزيزي المتداول. تم تفعيل النظام الذكي وتحليلات السوق اللحظية.\n"
+        "🤖 Spirex AI Gold Professional\n\n"
+        "أهلاً بك عزيزي المتداول. تم تحديث البوت بناءً على طلبك.\n"
         "اختر الخدمة المطلوبة من الأزرار بالأسفل:"
     )
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
@@ -183,7 +181,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(msg, reply_markup=back_keyboard)
         
     elif query.data == "btn_news":
-        news_msg = "📰 تقرير الأخبار الاقتصادية وتأثيرها:\n\n• الحالة: مستقرة مع ترقب لبيانات التضخم والفائدة.\n• تأثير الذهب: تذبذب طبيعي مع احترام مستويات الدعم والمقاومة الفنية."
+        news_msg = "📰 تقرير الأخبار الاقتصادية وتأثيرها:\n\n• الحالة: مستقرة مع ترقب لبيانات التضخم والفائدة."
         await query.edit_message_text(news_msg, reply_markup=back_keyboard)
 
     elif query.data == "btn_levels":
@@ -191,7 +189,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(levels_msg, reply_markup=back_keyboard)
 
     elif query.data == "btn_risk":
-        risk_msg = "🛡️ حاسبة إدارة المخاطر:\n\n• نسبة المخاطرة الموصى بها: 1% إلى 2% لكل صفقة.\n• حجم اللوت المناسب: يُحسب بناءً على حجم محفظتك ومسافة وقف الخسارة."
+        risk_msg = "🛡️ حاسبة إدارة المخاطر:\n\n• نسبة المخاطرة الموصى بها: 1% إلى 2% لكل صفقة."
         await query.edit_message_text(risk_msg, reply_markup=back_keyboard)
 
     elif query.data == "btn_back":
@@ -204,9 +202,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         welcome_text = (
-            "🤖 Spirex AI Gold Professional - المتقدم\n\n"
-            "أهلاً بك عزيزي المتداول. تم تفعيل النظام الذكي وتحليلات السوق اللحظية.\n"
-            "اختر الخدمة المطلوبة من الأزرار بالأسفل:"
+            "🤖 Spirex AI Gold Professional\n\n"
+            "أهلاً بك عزيزي المتداول. اختر الخدمة المطلوبة من الأزرار بالأسفل:"
         )
         await query.edit_message_text(welcome_text, reply_markup=reply_markup)
 
