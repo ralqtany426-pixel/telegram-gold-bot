@@ -4,10 +4,11 @@ import random
 import threading
 import time
 import pandas as pd
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
+    CallbackQueryHandler,
     ContextTypes,
 )
 import yfinance as yf
@@ -74,7 +75,6 @@ def fetch_and_analyze_market():
             trend = "BULLISH" if (rsi_val >= 50 and m_val >= s_val) else "BEARISH"
             current_price = round(float(close.iloc[-1]), 2)
             
-            # تعديل نقطة الدخول لتكون مباشرة عند سعر السوق الحالي أو قريبة جداً منه
             zero_lag_entry = current_price
 
             current_vol = float(volume.iloc[-1]) if not volume.empty else 0.0
@@ -102,34 +102,24 @@ def fetch_and_analyze_market():
             "high_volume": True
         }
 
-# --- دالة بناء رسالة التقرير بنظام الأهداف الثلاثة والفلترة ---
+# --- دالة بناء رسالة التقرير ---
 def build_signal_message(data):
     current_price = data["close"]
     rsi = data["rsi"]
     trend = data["trend"]
-    support = data["support"]
-    resistance = data["resistance"]
     entry_price = data["zero_lag_entry"]
-    high_vol = data["high_volume"]
-
-    base_score = 88
     
     if trend == "BULLISH":
-        direction = "شراء 🟢 (BUY)"
         stop_loss = round(entry_price - 12.0, 2)
         tp1 = round(entry_price + 15.0, 2)
         tp2 = round(entry_price + 30.0, 2)
         tp3 = round(entry_price + 50.0, 2)
     else:
-        direction = "بيع 🔴 (SELL)"
         stop_loss = round(entry_price + 12.0, 2)
         tp1 = round(entry_price - 15.0, 2)
         tp2 = round(entry_price - 30.0, 2)
         tp3 = round(entry_price - 50.0, 2)
 
-    if high_vol: base_score += 4
-    success_rate = min(base_score + random.randint(1, 3), 95)
-    
     message = (
         f"🔥 إشارة ذهب احترافية (Spirex AI)\n\n"
         f"💲 دخول: {entry_price}\n"
@@ -146,9 +136,78 @@ def build_signal_message(data):
         f"⏳ الفريم المستخدم: 15د - 1س - 4س - يومي\n"
         f"🚀 تم اكتمال الشروط بنجاح تام!"
     )
-    return message, success_rate
+    return message
 
-# --- أمر إرسال الإشارة اليدوي ---
+# --- أمر /start مع الأزرار كما في الصورة ---
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("عذراً، هذا البوت مخصص للمدير فقط.")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("🔥 صفقة الذهب الاحترافية", callback_data="btn_signal")],
+        [InlineKeyboardButton("🚨 إنذار صفقة زيرو انعكاس (95%)", callback_data="btn_zero")],
+        [InlineKeyboardButton("📰 تقرير الأخبار وتأثيرها", callback_data="btn_news")],
+        [InlineKeyboardButton("📊 مناطق الدعم والمقاومة", callback_data="btn_levels")],
+        [InlineKeyboardButton("🛡️ حاسبة إدارة المخاطر", callback_data="btn_risk")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    welcome_text = (
+        "🤖 Spirex AI Gold Professional - المتقدم\n\n"
+        "أهلاً بك عزيزي المتداول. تم تفعيل تحليلات الأطر الأربعة ومؤشرات RSI و MACD.\n"
+        "اختر الخدمة المطلوبة:"
+    )
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+
+# --- معالجة الضغط على الأزرار ---
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = fetch_and_analyze_market()
+    if not data:
+        await query.edit_message_text("عذراً، تعذر جلب بيانات السوق حالياً.")
+        return
+
+    if query.data == "btn_signal" or query.data == "btn_zero":
+        msg = build_signal_message(data)
+        back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="btn_back")]])
+        await query.edit_message_text(msg, reply_markup=back_keyboard)
+        
+    elif query.data == "btn_news":
+        news_msg = "📰 تقرير الأخبار الاقتصادية:\n\n• الحالة الحالية: مستقرة وترقب للبيانات القادمة.\n• تأثير العملات والذهب: تذبذب محدود مع ميل للإيجابية."
+        back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="btn_back")]])
+        await query.edit_message_text(news_msg, reply_markup=back_keyboard)
+
+    elif query.data == "btn_levels":
+        levels_msg = f"📊 مناطق الدعم والمقاومة الحالية:\n\n🛡️ الدعم: {data['support']}\n⚔️ المقاومة: {data['resistance']}\n💲 السعر الحالي: {data['close']}"
+        back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="btn_back")]])
+        await query.edit_message_text(levels_msg, reply_markup=back_keyboard)
+
+    elif query.data == "btn_risk":
+        risk_msg = "🛡️ حاسبة إدارة المخاطر:\n\n• المخاطر المقترحة لكل صفقة: 1% إلى 2% من رأس المال.\n• نسبة المخاطرة إلى العائد: 1:2.5 ممتازة."
+        back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="btn_back")]])
+        await query.edit_message_text(risk_msg, reply_markup=back_keyboard)
+
+    elif query.data == "btn_back":
+        keyboard = [
+            [InlineKeyboardButton("🔥 صفقة الذهب الاحترافية", callback_data="btn_signal")],
+            [InlineKeyboardButton("🚨 إنذار صفقة زيرو انعكاس (95%)", callback_data="btn_zero")],
+            [InlineKeyboardButton("📰 تقرير الأخبار وتأثيرها", callback_data="btn_news")],
+            [InlineKeyboardButton("📊 مناطق الدعم والمقاومة", callback_data="btn_levels")],
+            [InlineKeyboardButton("🛡️ حاسبة إدارة المخاطر", callback_data="btn_risk")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        welcome_text = (
+            "🤖 Spirex AI Gold Professional - المتقدم\n\n"
+            "أهلاً بك عزيزي المتداول. تم تفعيل تحليلات الأطر الأربعة ومؤشرات RSI و MACD.\n"
+            "اختر الخدمة المطلوبة:"
+        )
+        await query.edit_message_text(welcome_text, reply_markup=reply_markup)
+
+# --- أمر إرسال الإشارة اليدوي التقليدي ---
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
@@ -160,7 +219,7 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("عذراً, تعذر جلب بيانات السوق حالياً.")
         return
 
-    message, _ = build_signal_message(data)
+    message = build_signal_message(data)
     await update.message.reply_text(message)
 
 # --- مراقبة السوق تلقائياً في الخلفية ---
@@ -171,16 +230,13 @@ def background_market_watcher(application):
         try:
             data = fetch_and_analyze_market()
             if data:
-                _, success_rate = build_signal_message(data)
-                if success_rate >= 90 and last_alert_status != "SENT":
-                    message, _ = build_signal_message(data)
+                message = build_signal_message(data)
+                if last_alert_status != "SENT":
                     application.bot.send_message(
                         chat_id=ADMIN_ID, 
-                        text=f"🔔 تنبيه صفقة ذهب احترافية:\n\n{message}"
+                        text=f"🔔 تنبيه صفقة ذهب تلقائية:\n\n{message}"
                     )
                     last_alert_status = "SENT"
-                elif success_rate < 90:
-                    last_alert_status = "RESET"
         except Exception as e:
             print(f"Background watcher error: {e}")
 
@@ -189,7 +245,9 @@ def main():
         return
 
     app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("signal", signal_command))
+    app.add_handler(CallbackQueryHandler(button_handler))
     
     watcher_thread = threading.Thread(target=background_market_watcher, args=(app,), daemon=True)
     watcher_thread.start()
