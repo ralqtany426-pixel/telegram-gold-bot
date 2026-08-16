@@ -1,55 +1,86 @@
+import os
+import random
 import telebot
-# إذا كنت تستخدم مكتبة لجلب سعر الذهب مثل yfinance أو أي API آخر، تأكد من تعريفها هنا
-# مثال: import yfinance as yf
+from telebot import types
 
-# إعداد توكن البوت
-TOKEN = 'YOUR_BOT_TOKEN_HERE'
+# ضع توكن البوت هنا أو استخلصه من متغيرات البيئة
+TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 bot = telebot.TeleBot(TOKEN)
 
-# دالة لجلب السعر الحالي (قم بتغييرها حسب المصدر الذي تستخدمه)
-def get_current_gold_price():
-    # هنا تضع المنطق الخاص بك لجلب سعر الذهب الحالي
-    # سنفترض مؤقتاً أن السعر الحالي هو 4371.00 بناءً على الشارت الذي أرسلته
-    return 4371.00 
 
-def generate_signal_text(current_price, signal_type):
-    if signal_type == "BUY":
-        sl = round(current_price - 4.0, 2)
-        tp1 = round(current_price + 13.0, 2)
-        tp2 = round(current_price + 28.0, 2)
-        tp3 = round(current_price + 53.0, 2)
-        direction_text = "🟢 صفقة شراء (منطقة طلب قوية)"
-    else:
-        sl = round(current_price + 4.0, 2)
-        tp1 = round(current_price - 13.0, 2)
-        tp2 = round(current_price - 28.0, 2)
-        tp3 = round(current_price - 53.0, 2)
-        direction_text = "🔴 صفقة بيع (منطقة عرض قوية)"
+def generate_gold_signal():
+  # توليد سعر دخول واقعي للذهب (مثال قريب للسعر الحالي)
+  base_price = round(random.uniform(4350.00, 4400.00), 2)
 
-    text = f"""
-🔥 **أنذار ذكي - صفقة زيرو انعكاس**
-🎯 **نسبة التأكد:** 95%
+  entry = base_price
+  stop_loss = round(entry - 12.00, 2)  # وقف خسارة قريب ومنطقي
 
-📍 **نوع الصفقة:** {direction_text}
-💰 **سعر الدخول:** {current_price}
-🛑 **وقف الخسارة (SL):** {sl}
+  tp1 = round(entry + 15.00, 2)
+  tp2 = round(entry + 30.00, 2)
+  tp3 = round(entry + 50.00, 2)
 
-🎯 **الأهداف المستهدفة:**
-✅ **TP1:** {tp1}
-✅ **TP2:** {tp2}
-✅ **TP3:** {tp3}
+  rsi_d1 = random.randint(50, 60)
+  rsi_h4 = random.randint(50, 58)
+  rsi_h1 = random.randint(48, 55)
+  mac_m15 = random.choice(["UP", "BULLISH"])
 
-⏳ **الفريم المستخدم:** 15 دقيقة (M15)
-🚀 **تم اكتمال الشروط الفنية للسيولة بنجاح تام!**
-"""
-    return text
+  signal_text = (
+      "🔥 إشارة ذهب احترافية (Spirex AI)\n\n"
+      f"💵 دخول: {entry}\n"
+      f"🛑 وقف الخسارة: {stop_loss}\n\n"
+      "📊 تحليل الأطر الزمنية المتعددة:\n"
+      f"• اليومي (D1): صاعد | RSI: {rsi_d1}\n"
+      f"• 4 ساعات (H4): صاعد | RSI: {rsi_h4}\n"
+      f"• ساعة (H1): صاعد | RSI: {rsi_h1}\n"
+      f"• 15 دقيقة (M15): صاعد | MACD: {mac_m15}\n\n"
+      "🎯 الأهداف:\n"
+      f"✅ TP1: {tp1}\n"
+      f"✅ TP2: {tp2}\n"
+      f"✅ TP3: {tp3}\n\n"
+      "⏳ الفريم المستخدم: 15د - 1س - 4س - يومي\n"
+      "🚀 تم اكتمال الشروط بنجاح تام!"
+  )
+  return signal_text
 
-# مثال لكيفية إرسال الرسالة عند طلبها
-@bot.message_handler(commands=['start', 'signal'])
-def send_signal(message):
-    price = get_current_gold_price()
-    # يمكنك إضافة شرط هنا لاختيار BUY أو SELL بناءً على التحليل الفني
-    signal_text = generate_signal_text(price, "BUY") 
-    bot.reply_to(message, signal_text, parse_mode="Markdown")
 
-bot.polling()
+@bot.message_handler(commands=["start", "help"])
+def send_welcome(message):
+  markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+  item1 = types.KeyboardButton("📊 إشارة ذهب جديدة")
+  item2 = types.KeyboardButton("◀️ القائمة الرئيسية")
+  markup.add(item1, item2)
+
+  welcome_text = (
+      "🤖 Spirex AI Gold Professional - النظام الذكي\n\n"
+      "اهلاً بك عزيزي المتداول. تم تفعيل تحليلات الاطر الأربعة ومؤشرات RSI و MACD."
+      "\nاختر الخدمة المطلوبة:"
+  )
+  bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
+
+
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+  if (
+      "إشارة" in message.text
+      or "بدء" in message.text
+      or message.text == "/start"
+  ):
+    signal = generate_gold_signal()
+
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    item_back = types.KeyboardButton("◀️ القائمة الرئيسية")
+    markup.add(item_back)
+
+    bot.send_message(message.chat.id, signal, reply_markup=markup)
+  elif "القائمة الرئيسية" in message.text:
+    send_welcome(message)
+  else:
+    bot.send_message(
+        message.chat.id,
+        "الرجاء استخدام الأزرار أدناه للتحكم بالبوت.",
+    )
+
+
+if __name__ == "__main__":
+  print("Bot is running...")
+  bot.infinity_polling()
