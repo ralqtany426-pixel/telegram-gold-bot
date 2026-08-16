@@ -94,7 +94,6 @@ def fetch_and_analyze_market():
             }
         return None
     except Exception as e:
-        # بيانات احتياطية مطابقة لسعر إغلاق الذهب 4375.63 للاختبار
         return {
             "trend": "BULLISH",
             "rsi": 58.5,
@@ -105,7 +104,7 @@ def fetch_and_analyze_market():
             "high_volume": True
         }
 
-# --- دالة بناء رسالة التقرير بالتنسيق المطابق للصورة بالضبط مع صفقات الذهب الاحترافية ---
+# --- دالة بناء رسالة التقرير ---
 def build_signal_message(data):
     current_price = data["close"]
     rsi = data["rsi"]
@@ -117,20 +116,18 @@ def build_signal_message(data):
 
     base_score = 88
     
-    # حساب وقف الخسارة وأهداف الربح بشكل صحيح ومنطقي تماماً
     if trend == "BULLISH":
         direction = "شراء 🟢 (BUY)"
-        stop_loss = round(zero_lag - 15.0, 2)   # تحت سعر الدخول
-        take_profit = round(zero_lag + 25.0, 2) # فوق سعر الدخول
+        stop_loss = round(zero_lag - 15.0, 2)
+        take_profit = round(zero_lag + 25.0, 2)
     else:
         direction = "بيع 🔴 (SELL)"
-        stop_loss = round(zero_lag + 15.0, 2)   # فوق سعر الدخول
-        take_profit = round(zero_lag - 25.0, 2) # تحت سعر الدخول
+        stop_loss = round(zero_lag + 15.0, 2)
+        take_profit = round(zero_lag - 25.0, 2)
 
     if high_vol: base_score += 4
     success_rate = min(base_score + random.randint(1, 3), 95)
     
-    # تنسيق العنوان تماماً مثل صورتك مع لمسة صفقات الذهب الاحترافية
     header = "🚨 إنذار فوري: صفقة ذهب احترافية قوية ومؤكدة للدخول! 🔥" if success_rate >= 90 else "⚡ تحليل صفقات الذهب الاحترافية الحالي:"
 
     message = (
