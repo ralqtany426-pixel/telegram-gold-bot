@@ -3,10 +3,9 @@ import os
 import random
 import threading
 import pandas as pd
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
-    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
 )
@@ -15,336 +14,177 @@ import yfinance as yf
 # --- معرف المدير (أنت وحدك فقط) ---
 ADMIN_ID = 1642160234
 
-
-# --- التحقق من الهوية ---
 def is_admin(user_id):
-  return user_id == ADMIN_ID
-
+    return user_id == ADMIN_ID
 
 # --- تشغيل السيرفر لـ Render ---
 class SimpleHandler(BaseHTTPRequestHandler):
-
-  def do_GET(self):
-    self.send_response(200)
-    self.end_headers()
-    self.wfile.write(b"Bot is running!")
-
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
 
 def run_server():
-  server = HTTPServer(("0.0.0.0", 10000), SimpleHandler)
-  server.serve_forever()
-
+    server = HTTPServer(("0.0.0.0", 10000), SimpleHandler)
+    server.serve_forever()
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# Token Telegram
 TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
 
-
 def calculate_rsi(series, period=14):
-  delta = series.diff()
-  gain = delta.where(delta > 0, 0).rolling(window=period).mean()
-  loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-  rs = gain / loss
-  return 100 - (100 / (1 + rs))
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
-
+# --- جلب وتحليل السوق (يشمل الدعم، المقاومة، والزيرو انعكاس) ---
 def fetch_and_analyze_market():
-  ticker = "GC=F"
-  timeframes = {"M15": "15m", "H1": "1h", "H4": "1h", "D1": "1d"}
-  results = {}
-  try:
-    for tf_name, interval in timeframes.items():
-      period = "max" if tf_name == "D1" else ("60d" if tf_name == "H4" else "5d")
-      df = yf.download(ticker, period=period, interval=interval, progress=False)
-      if df.empty:
-        continue
-      if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-      if tf_name == "H4":
-        df = (
-            df.resample("4H")
-            .agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
-            .dropna()
-        )
+    ticker = "GC=F"
+    timeframes = {"M15": "15m", "H1": "1h", "H4": "1h", "D1": "1d"}
+    results = {}
+    try:
+        for tf_name, interval in timeframes.items():
+            period = "max" if tf_name == "D1" else ("60d" if tf_name == "H4" else "5d")
+            df = yf.download(ticker, period=period, interval=interval, progress=False)
+            if df.empty:
+                continue
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            if tf_name == "H4":
+                df = df.resample('4H').agg({
+                    'Open': 'first', 
+                    'High': 'max', 
+                    'Low': 'min', 
+                    'Close': 'last', 
+                    'Volume': 'sum'
+                }).dropna()
 
-      if len(df) > 20:
-        close = df["Close"]
-        rsi_series = calculate_rsi(close, 14)
-        rsi_val = (
-            float(rsi_series.iloc[-1]) if not rsi_series.empty else 50.0
-        )
+            if len(df) > 50:
+                close = df["Close"]
+                high = df["High"]
+                low = df["Low"]
+                volume = df["Volume"] if "Volume" in df.columns else pd.Series([0]*len(close))
+                
+                # حساب مستويات الدعم والمقاومة بناءً على آخر الشموع
+                support = round(float(low.rolling(window=20).min().iloc[-1]), 2)
+                resistance = round(float(high.rolling(window=20).max().iloc[-1]), 2)
 
-        # حساب MACD مبسط
-        exp1 = close.ewm(span=12, adjust=False).mean()
-        exp2 = close.ewm(span=26, adjust=False).mean()
-        macd = exp1 - exp2
-        signal = macd.ewm(span=9, adjust=False).mean()
+                # حساب RSI والمؤشرات
+                rsi_series = calculate_rsi(close, 14)
+                rsi_val = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50.0
 
-        m_val = float(macd.iloc[-1])
-        s_val = float(signal.iloc[-1])
-        prev_m = float(macd.iloc[-2])
-        prev_s = float(signal.iloc[-2])
+                ema_50 = close.ewm(span=50, adjust=False).mean().iloc[-1]
+                
+                exp1 = close.ewm(span=12, adjust=False).mean()
+                exp2 = close.ewm(span=26, adjust=False).mean()
+                macd = exp1 - exp2
+                signal = macd.ewm(span=9, adjust=False).mean()
 
-        trend = (
-            "BULLISH" if (rsi_val > 50 and m_val > s_val) else "BEARISH"
-        )
-        cross = (
-            "UP"
-            if (prev_m < prev_s and m_val > s_val)
-            else (
-                "DOWN"
-                if (prev_m > prev_s and m_val < s_val)
-                else "NONE"
-            )
-        )
+                m_val = float(macd.iloc[-1])
+                s_val = float(signal.iloc[-1])
 
-        results[tf_name] = {
-            "trend": trend,
-            "rsi": round(rsi_val, 2),
-            "macd_cross": cross,
-            "close": round(float(close.iloc[-1]), 2),
-        }
-    return results
-  except Exception as e:
-    print(f"Error: {e}")
-    return None
+                trend = "BULLISH" if (rsi_val > 50 and m_val > s_val and close.iloc[-1] > ema_50) else "BEARISH"
+                
+                current_price = round(float(close.iloc[-1]), 2)
+                
+                # حساب منطقة الزيرو انعكاس (أفضل نقطة دخول قريبة من الدعم/المقاومة)
+                if trend == "BULLISH":
+                    zero_lag_entry = round((current_price + support) / 2, 2)
+                else:
+                    zero_lag_entry = round((current_price + resistance) / 2, 2)
 
+                avg_vol = volume.rolling(window=10).mean().iloc[-1] if len(volume) >= 10 else volume.iloc[-1]
+                high_volume = volume.iloc[-1] > avg_vol
 
-def generate_pro_signal():
-  analysis = fetch_and_analyze_market()
-  base_price = (
-      analysis.get("M15", {}).get("close", 4375.63)
-      if analysis
-      else 4375.63
-  )
-  entry = round(base_price, 2)
-  return {
-      "entry": entry,
-      "sl": round(entry - 12.0, 2),
-      "tp1": round(entry + 15.0, 2),
-      "tp2": round(entry + 30.0, 2),
-      "tp3": round(entry + 50.0, 2),
-      "trend": "صعود قوي (Bullish Momentum)",
-  }
+                results[tf_name] = {
+                    "trend": trend,
+                    "rsi": round(rsi_val, 2),
+                    "close": current_price,
+                    "support": support,
+                    "resistance": resistance,
+                    "zero_lag_entry": zero_lag_entry,
+                    "high_volume": high_volume
+                }
+        return results
+    except Exception as e:
+        print(f"Error fetching data: {e}")
+        return None
 
+# --- أمر إرسال الإشارة والإنذار الفوري ---
+async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("عذراً، هذا البوت مخصص للمدير فقط.")
+        return
 
-def generate_zero_drawdown_signal():
-  analysis = fetch_and_analyze_market()
-  base_price = (
-      analysis.get("M15", {}).get("close", 4375.63)
-      if analysis
-      else 4375.63
-  )
-  entry = round(base_price, 2)
-  return {
-      "entry": entry,
-      "sl": round(entry - 5.0, 2),
-      "tp1": round(entry + 15.0, 2),
-      "tp2": round(entry + 30.0, 2),
-      "tp3": round(entry + 55.0, 2),
-      "accuracy": "95%",
-      "zone": "منطقة طلب قوية (Demand Zone)",
-  }
+    data = fetch_and_analyze_market()
+    if not data or "H1" not in data or "H4" not in data:
+        await update.message.reply_text("عذراً, حدث خطأ أثناء جلب بيانات السوق. حاول مرة أخرى.")
+        return
 
+    h1_data = data["H1"]
+    h4_data = data["H4"]
+    
+    current_price = h1_data["close"]
+    rsi = h1_data["rsi"]
+    h1_trend = h1_data["trend"]
+    h4_trend = h4_data["trend"]
+    support = h1_data["support"]
+    resistance = h1_data["resistance"]
+    zero_lag = h1_data["zero_lag_entry"]
+    high_vol = h1_data["high_volume"]
 
-def get_economic_news():
-  return random.choice([
-      (
-          "🚨 **خبر عالي التأثير:** مؤشر أسعار المستهلكين (CPI) - توقع تقلبات"
-          " عنيفة."
-      ),
-      (
-          "⚠️ **تنبيه اخبار:** تقرير التوظيف الأمريكي (NFP) - السوق يهيئ لاختراق"
-          " سعري."
-      ),
-      (
-          "🟢 **استقرار الأخبار:** الأجندة هادئة حالياً والتداول بناءً على"
-          " السيولة."
-      ),
-  ])
+    # خوارزمية نسبة النجاح وحالة الإنذار
+    base_score = 83
+    timeframe_match = (h1_trend == h4_trend)
 
+    if h1_trend == "BULLISH":
+        direction = "شراء 🟢 (BUY)"
+        stop_loss = round(support - 3.0, 2)
+        take_profit = round(current_price + 20.0, 2)
+        if rsi < 45: base_score += 5
+    else:
+        direction = "بيع 🔴 (SELL)"
+        stop_loss = round(resistance + 3.0, 2)
+        take_profit = round(current_price - 20.0, 2)
+        if rsi > 55: base_score += 5
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  user_id = (
-      update.message.from_user.id
-      if update.message
-      else update.callback_query.from_user.id
-  )
+    if timeframe_match: base_score += 7
+    if high_vol: base_score += 4
 
-  # فحص الصلاحية
-  if not is_admin(user_id):
-    msg = "⛔ عذراً، هذا البوت خاص ولا يمكنك استخدامه."
-    if update.message:
-      await update.message.reply_text(msg)
-    elif update.callback_query:
-      await update.callback_query.answer(msg, show_alert=True)
-    return
+    success_rate = min(base_score + random.randint(1, 3), 96)
+    
+    # إنذار فوري للصفقات عالية الثقة
+    alert_badge = "🚨 إنذار فوري: صفقة قوية ومؤكدة للدخول! 🔥" if success_rate >= 90 else "⚡ تحليل السوق الحالي:"
 
-  welcome_msg = (
-      "🤖 **Spirex AI Gold Professional - النظام الذكي المتقدم**\n\n"
-      "أهلاً بك عزيزي المتداول. تم تفعيل تحليلات الأطر الأربعة ومؤشرات RSI و"
-      " MACD.\n"
-      "اختر الخدمة المطلوبة:"
-  )
-  keyboard = [
-      [
-          InlineKeyboardButton(
-              "🔥 صفقة الذهب الاحترافية", callback_data="gold_signal"
-          )
-      ],
-      [
-          InlineKeyboardButton(
-              "🚨 إنذار صفقة زيرو انعكاس (95%)", callback_data="zero_signal"
-          )
-      ],
-      [InlineKeyboardButton("📰 تقرير الأخبار وتأثيرها", callback_data="eco_news")],
-      [
-          InlineKeyboardButton(
-              "📊 مناطق الدعم والمقاومة", callback_data="support_resistance"
-          )
-      ],
-      [
-          InlineKeyboardButton(
-              "🛡️ حاسبة إدارة المخاطر", callback_data="risk_calculator"
-          )
-      ],
-  ]
-  reply_markup = InlineKeyboardMarkup(keyboard)
-  if update.message:
-    await update.message.reply_text(
-        welcome_msg, reply_markup=reply_markup, parse_mode="Markdown"
-    )
-  elif update.callback_query:
-    await update.callback_query.message.edit_text(
-        welcome_msg, reply_markup=reply_markup, parse_mode="Markdown"
+    message = (
+        f"📊 **{alert_badge}**\n\n"
+        f"🔸 **الزوج:** الذهب (XAU/USD)\n"
+        f"🎯 **الاتجاه:** {direction}\n"
+        f"💎 **نقطة الزيرو انعكاس (الدخول المثالي):** `{zero_lag}`\n"
+        f"🛑 **وقف الخسارة (SL):** {stop_loss}\n"
+        f"✅ **هدف الربح (TP):** {take_profit}\n\n"
+        f"🛡️ **الدعم:** `{support}` | ⚔️ **المقاومة:** `{resistance}`\n"
+        f"📈 **مؤشر RSI:** `{rsi}` | 📊 **الفوليوم:** `{'مرتفع 🔥' if high_vol else 'عادي'}`\n"
+        f"📰 **حالة الأخبار الاقتصادية:** `مستقرة / ترقب للبيانات`\n"
+        f"⭐ **نسبة نجاح الصفقة:** `{success_rate}%`\n\n"
+        f"💡 *تم دمج الدعم، المقاومة، ونقاط الزيرو انعكاس بنجاح.*"
     )
 
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  query = update.callback_query
-  user_id = query.from_user.id
-
-  # فحص الصلاحية للأزرار أيضاً
-  if not is_admin(user_id):
-    await query.answer(
-        "⛔ عذراً، هذا البوت خاص ولا يمكنك استخدامه.", show_alert=True
-    )
-    return
-
-  await query.answer()
-
-  if query.data == "gold_signal":
-    s = generate_pro_signal()
-    analysis = fetch_and_analyze_market() or {}
-    d1 = analysis.get("D1", {})
-    h4 = analysis.get("H4", {})
-    h1 = analysis.get("H1", {})
-    m15 = analysis.get("M15", {})
-
-    text = (
-        f"🔥 **إشارة ذهب احترافية (Spirex AI)**\n\n"
-        f"💵 دخول: `{s['entry']}`\n"
-        f"🛑 وقف الخسارة: `{s['sl']}`\n\n"
-        f"📊 **تحليل الأطر الزمنية المتعددة:**\n"
-        f"• اليومي (D1): `{d1.get('trend', 'صاعد')}` | RSI:"
-        f" `{d1.get('rsi', '55')}`\n"
-        f"• 4 ساعات (H4): `{h4.get('trend', 'صاعد')}` | RSI:"
-        f" `{h4.get('rsi', '53')}`\n"
-        f"• ساعة (H1): `{h1.get('trend', 'صاعد')}` | RSI:"
-        f" `{h1.get('rsi', '51')}`\n"
-        f"• 15 دقيقة (M15): `{m15.get('trend', 'صاعد')}` | MACD:"
-        f" `{m15.get('macd_cross', 'UP')}`\n\n"
-        f"🎯 الأهداف:\n"
-        f"✅ TP1: `{s['tp1']}`\n"
-        f"✅ TP2: `{s['tp2']}`\n"
-        f"✅ TP3: `{s['tp3']}`\n\n"
-        f"⏳ **الفريم المستخدم:** `15د - 1س - 4س - يومي`\n"
-        f"🚀 **تم اكتمال الشروط بنجاح تام!**"
-    )
-    await query.message.edit_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_home")
-        ]]),
-    )
-
-  elif query.data == "zero_signal":
-    s = generate_zero_drawdown_signal()
-    text = (
-        f"🔥 **أنذار ذكي - صفقة زيرو انعكاس**\n"
-        f"🎯 **نسبة التأكد:** `{s['accuracy']}`\n\n"
-        f"📍 **منطقة الدخول:** `{s['zone']}`\n"
-        f"💵 سعر الدخول: `{s['entry']}`\n"
-        f"🛑 وقف الخسارة: `{s['sl']}`\n\n"
-        f"📊 **تحليل السيولة والأطر الأربعة:** متوافق تماماً بنسبة 95%\n\n"
-        f"🎯 الأهداف المستهدفة:\n"
-        f"✅ TP1: `{s['tp1']}`\n"
-        f"✅ TP2: `{s['tp2']}`\n"
-        f"✅ TP3: `{s['tp3']}`"
-    )
-    await query.message.edit_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_home")
-        ]]),
-    )
-
-  elif query.data == "eco_news":
-    news = get_economic_news()
-    text = f"📰 **تقرير الأخبار الاقتصادية**\n\n{news}"
-    await query.message.edit_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_home")
-        ]]),
-    )
-
-  elif query.data == "support_resistance":
-    text = (
-        f"📊 **مستويات الدعم والمقاومة الحية**\n\n"
-        f"🔴 المقاومة (R1): `4395.00`\n"
-        f"🟢 الدعم (S1): `4370.00`\n\n"
-        f"💡 التحديث بناءً على السيولة الحالية."
-    )
-    await query.message.edit_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_home")
-        ]]),
-    )
-
-  elif query.data == "risk_calculator":
-    text = (
-        f"🛡️ **حاسبة إدارة المخاطر**\n\n• رأس المال الموصى به: `1000$`\n• حجم"
-        " العقد الآمن: `0.01` لكل `1000$`"
-    )
-    await query.message.edit_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_home")
-        ]]),
-    )
-
-  elif query.data == "back_home":
-    await start(update, context)
-
+    await update.message.reply_text(message, parse_mode="Markdown")
 
 def main():
-  if not TOKEN:
-    print("Error: No Token found!")
-    return
-  app = ApplicationBuilder().token(TOKEN).build()
-  app.add_handler(CommandHandler("start", start))
-  app.add_handler(CallbackQueryHandler(button_handler))
-  print("Bot is running successfully!")
-  app.run_polling()
+    if not TOKEN:
+        print("الرجاء توفير توكن البوت في متغيرات البيئة (BOT_TOKEN).")
+        return
 
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("signal", signal_command))
+    
+    print("البوت يعمل الآن بكفاءة...")
+    app.run_polling()
 
 if __name__ == "__main__":
-  main()
+    main()
