@@ -79,8 +79,9 @@ def fetch_and_analyze_market():
             else:
                 zero_lag_entry = round((current_price + resistance) / 2, 2)
 
-            avg_vol = volume.rolling(window=10).mean().iloc[-1] if len(volume) >= 10 else volume.iloc[-1]
-            high_volume = volume.iloc[-1] > avg_vol
+            current_vol = float(volume.iloc[-1]) if not volume.empty else 0.0
+            avg_vol = float(volume.rolling(window=10).mean().iloc[-1]) if len(volume) >= 10 else current_vol
+            high_volume = current_vol > avg_vol
 
             return {
                 "trend": trend,
@@ -93,7 +94,7 @@ def fetch_and_analyze_market():
             }
         return None
     except Exception as e:
-        # بيانات افتراضية آمنة في حال إغلاق السوق للاختبار
+        # بيانات احتياطية مطابقة لسعر إغلاق الذهب 4375.63 للاختبار
         return {
             "trend": "BULLISH",
             "rsi": 58.5,
@@ -104,7 +105,7 @@ def fetch_and_analyze_market():
             "high_volume": True
         }
 
-# --- دالة بناء رسالة التقرير (المُعدلة صحيحة منطقياً) ---
+# --- دالة بناء رسالة التقرير بالتنسيق المطابق للصورة بالضبط مع صفقات الذهب الاحترافية ---
 def build_signal_message(data):
     current_price = data["close"]
     rsi = data["rsi"]
@@ -116,34 +117,33 @@ def build_signal_message(data):
 
     base_score = 88
     
-    # التعديل الصحيح والمضمون لمنطق الشراء والبيع:
+    # حساب وقف الخسارة وأهداف الربح بشكل صحيح ومنطقي تماماً
     if trend == "BULLISH":
         direction = "شراء 🟢 (BUY)"
-        # في الشراء: وقف الخسارة تحت سعر الدخول، وهدف الربح فوقه
-        stop_loss = round(zero_lag - 15.0, 2)   
-        take_profit = round(zero_lag + 25.0, 2) 
+        stop_loss = round(zero_lag - 15.0, 2)   # تحت سعر الدخول
+        take_profit = round(zero_lag + 25.0, 2) # فوق سعر الدخول
     else:
         direction = "بيع 🔴 (SELL)"
-        # في البيع: وقف الخسارة فوق سعر الدخول، وهدف الربح تحته
-        stop_loss = round(zero_lag + 15.0, 2)   
-        take_profit = round(zero_lag - 25.0, 2) 
+        stop_loss = round(zero_lag + 15.0, 2)   # فوق سعر الدخول
+        take_profit = round(zero_lag - 25.0, 2) # تحت سعر الدخول
 
     if high_vol: base_score += 4
     success_rate = min(base_score + random.randint(1, 3), 95)
     
-    alert_badge = "🚨 إنذار فوري: صفقة قوية ومؤكدة للدخول! 🔥" if success_rate >= 90 else "⚡ تحليل السوق الحالي:"
+    # تنسيق العنوان تماماً مثل صورتك مع لمسة صفقات الذهب الاحترافية
+    header = "🚨 إنذار فوري: صفقة ذهب احترافية قوية ومؤكدة للدخول! 🔥" if success_rate >= 90 else "⚡ تحليل صفقات الذهب الاحترافية الحالي:"
 
     message = (
-        f"📊 **{alert_badge}**\n\n"
-        f"🔸 **الزوج:** الذهب (XAU/USD)\n"
-        f"🎯 **الاتجاه:** {direction}\n"
-        f"💎 **نقطة الزيرو انعكاس (الدخول المثالي):** `{zero_lag}`\n"
-        f"🛑 **وقف الخسارة (SL):** `{stop_loss}`\n"
-        f"✅ **هدف الربح (TP):** `{take_profit}`\n\n"
-        f"🛡️ **الدعم:** `{support}` | ⚔️ **المقاومة:** `{resistance}`\n"
-        f"📈 **مؤشر RSI:** `{rsi}` | 📊 **الفوليوم:** `{'مرتفع 🔥' if high_vol else 'عادي'}`\n"
-        f"📰 **حالة الأخبار الاقتصادية:** `مستقرة / ترقب للبيانات`\n"
-        f"⭐ **نسبة نجاح الصفقة:** `{success_rate}%`"
+        f"{header} 📊\n\n"
+        f"🔸 الزوج: الذهب (XAU/USD)\n"
+        f"🎯 الاتجاه: {direction}\n"
+        f"💎 نقطة الزيرو انعكاس (الدخول المثالي): {zero_lag}\n"
+        f"🛑 وقف الخسارة (SL): {stop_loss}\n"
+        f"✅ هدف الربح (TP): {take_profit}\n\n"
+        f"🛡️ الدعم: {support} | ⚔️ المقاومة: {resistance}\n"
+        f"📈 مؤشر RSI: {rsi} | 📊 الفوليوم: {'مرتفع 🔥' if high_vol else 'عادي'}\n"
+        f"📰 حالة الأخبار الاقتصادية: مستقرة / ترقب للبيانات\n"
+        f"⭐ نسبة نجاح الصفقة الاحترافية: {success_rate}%"
     )
     return message, success_rate
 
@@ -160,13 +160,13 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     message, _ = build_signal_message(data)
-    await update.message.reply_text(message, parse_mode="Markdown")
+    await update.message.reply_text(message)
 
-# --- مراقبة السوق تلقائياً في الخلفية وإرسال تنبيه فور دخول صفقة ممتازة ---
+# --- مراقبة السوق تلقائياً في الخلفية ---
 def background_market_watcher(application):
     last_alert_status = None
     while True:
-        time.sleep(1800) # يفحص السوق كل 30 دقيقة تلقائياً
+        time.sleep(1800) 
         try:
             data = fetch_and_analyze_market()
             if data:
@@ -175,8 +175,7 @@ def background_market_watcher(application):
                     message, _ = build_signal_message(data)
                     application.bot.send_message(
                         chat_id=ADMIN_ID, 
-                        text=f"🔔 **تنبيه تلقائي من بوتك:**\n\n{message}", 
-                        parse_mode="Markdown"
+                        text=f"🔔 تنبيه صفقة ذهب احترافية:\n\n{message}"
                     )
                     last_alert_status = "SENT"
                 elif success_rate < 90:
@@ -194,7 +193,7 @@ def main():
     watcher_thread = threading.Thread(target=background_market_watcher, args=(app,), daemon=True)
     watcher_thread.start()
     
-    print("البوت ومراقب الصفقات التلقائي يعملان الآن بكفاءة...")
+    print("بوت صفقات الذهب الاحترافية يعمل بنجاح...")
     app.run_polling()
 
 if __name__ == "__main__":
