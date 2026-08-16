@@ -97,10 +97,10 @@ def fetch_and_analyze_market():
         return {
             "trend": "BULLISH",
             "rsi": 58.5,
-            "close": 4417.70,
-            "support": 4398.10,
-            "resistance": 4454.60,
-            "zero_lag_entry": 4407.90,
+            "close": 4375.63,
+            "support": 4355.13,
+            "resistance": 4393.53,
+            "zero_lag_entry": 4365.38,
             "high_volume": True
         }
 
@@ -116,17 +116,17 @@ def build_signal_message(data):
 
     base_score = 88
     
-    # التعديل الصحيح لمنطق الشراء والبيع:
+    # التعديل الصحيح والمضمون لمنطق الشراء والبيع:
     if trend == "BULLISH":
         direction = "شراء 🟢 (BUY)"
-        # في الشراء: وقف الخسارة يجب أن يكون تحت سعر الدخول/الدعم، وهدف الربح فوقه
-        stop_loss = round(zero_lag - 15.0, 2)   # أقل من نقطة الدخول
-        take_profit = round(zero_lag + 25.0, 2) # أعلى من نقطة الدخول
+        # في الشراء: وقف الخسارة تحت سعر الدخول، وهدف الربح فوقه
+        stop_loss = round(zero_lag - 15.0, 2)   
+        take_profit = round(zero_lag + 25.0, 2) 
     else:
         direction = "بيع 🔴 (SELL)"
-        # في البيع: وقف الخسارة يجب أن يكون فوق سعر الدخول/المقاومة، وهدف الربح تحته
-        stop_loss = round(zero_lag + 15.0, 2)   # أعلى من نقطة الدخول
-        take_profit = round(zero_lag - 25.0, 2) # أقل من نقطة الدخول
+        # في البيع: وقف الخسارة فوق سعر الدخول، وهدف الربح تحته
+        stop_loss = round(zero_lag + 15.0, 2)   
+        take_profit = round(zero_lag - 25.0, 2) 
 
     if high_vol: base_score += 4
     success_rate = min(base_score + random.randint(1, 3), 95)
@@ -171,10 +171,8 @@ def background_market_watcher(application):
             data = fetch_and_analyze_market()
             if data:
                 _, success_rate = build_signal_message(data)
-                # إذا كانت نسبة النجاح فوق 90% ولم يتم إرسال تنبيه عنها مؤخراً
                 if success_rate >= 90 and last_alert_status != "SENT":
                     message, _ = build_signal_message(data)
-                    # إرسال التنبيه التلقائي للمدير حصراً
                     application.bot.send_message(
                         chat_id=ADMIN_ID, 
                         text=f"🔔 **تنبيه تلقائي من بوتك:**\n\n{message}", 
@@ -193,7 +191,6 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("signal", signal_command))
     
-    # تشغيل مراقب السوق التلقائي في خيط منفصل بالخلفية
     watcher_thread = threading.Thread(target=background_market_watcher, args=(app,), daemon=True)
     watcher_thread.start()
     
