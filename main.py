@@ -1,44 +1,33 @@
 import os
 import telebot
-import yfinance as yf
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from flask import Flask
-import threading
+from flask import Flask, request
 
 TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
+# رابط استضافة سيرفرك على Render (استبدل هذا الرابط برابط موقعك الحقيقي على Render)
+RENDER_URL = 'https://gold-signal-trader.onrender.com'
+
 @app.route('/')
 def home():
-    return "Bot is running!"
+    return "Bot is running live!"
 
-def run_flask():
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-
-# تشغيل خادم الويب في خلفية منفصلة لإبقاء Render راضياً
-threading.Thread(target=run_flask, daemon=True).start()
-
-def get_data():
-    g = yf.Ticker("XAUUSD=X")
-    df = g.history(period="1d", interval="1m")
-    p = df['Close'].iloc[-1] if not df.empty else 4410.0
-    return p
+@app.route(f'/{TOKEN}', methods=['POST'])
+def receive_message():
+    json_string = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return "!", 200
 
 @bot.message_handler(commands=['start'])
 def start(m):
-    p = get_data()
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("📈 تحليل السوق", callback_data="all"))
-    bot.send_message(m.chat.id, f"🤖 Spirex Gold Bot\nسعر الذهب الحالي (XAUUSD): {p:.2f}", reply_markup=markup)
+    bot.send_message(m.chat.id, "🤖 أهلاً بك يا عبد الله! بوت تداول الذهب يعمل الآن بنظام الـ Webhook بنجاح تام.")
 
-@bot.callback_query_handler(func=lambda call: True)
-def cb(call):
-    p = get_data()
-    bot.send_message(call.message.chat.id, f"📊 السعر الفوري المباشر: {p:.2f}")
-
-# حذف أي Webhook قديم عالق قبل تشغيل البوت
-bot.remove_webhook()
-
-# التشغيل المباشر الآمن
-bot.infinity_polling(skip_pending=True)
+if __name__ == '__main__':
+    # إزالة أي ويب هوك قديم وتعيين الرابط الجديد تلقائياً عند التشغيل
+    bot.remove_webhook()
+    bot.set_webhook(url=f'{RENDER_URL}/{TOKEN}')
+    
+    # تشغيل سيرفر Flask على بورت Render
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
