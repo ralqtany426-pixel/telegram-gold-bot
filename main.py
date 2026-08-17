@@ -2,23 +2,20 @@ import telebot
 import yfinance as yf
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-TOKEN = "ضع_توكن_البوت_هنا"
+TOKEN = "رقم_التوكن_الحقيقي_هنا"
 bot = telebot.TeleBot(TOKEN)
 
-# دالة لجلب السعر وتحليل الأطر الزمنية المختلفة
 def analyze_all_timeframes():
     gold = yf.Ticker("GC=F")
     
-    # جلب بيانات الأطر المختلفة
     tf_5m = gold.history(period="1d", interval="5m")
     tf_15m = gold.history(period="5d", interval="15m")
     tf_1h = gold.history(period="1mo", interval="60m")
-    tf_4h = gold.history(period="1mo", interval="1h") # ياهو يعوض بـ 1h أو بناء الهيكل
+    tf_4h = gold.history(period="1mo", interval="1h")
     tf_1d = gold.history(period="3mo", interval="1d")
     
     current_price = tf_15m['Close'].iloc[-1]
     
-    # تحديد الاتجاه لكل إطار بناءً على السعر الحالي مقارنة بالشمعة السابقة
     t5 = "صاعد 🟢" if tf_5m['Close'].iloc[-1] > tf_5m['Close'].iloc[-2] else "هابط 🔴"
     t15 = "صاعد 🟢" if tf_15m['Close'].iloc[-1] > tf_15m['Close'].iloc[-2] else "هابط 🔴"
     t1h = "صاعد 🟢" if tf_1h['Close'].iloc[-1] > tf_1h['Close'].iloc[-2] else "هابط 🔴"
