@@ -1,6 +1,25 @@
+import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 import yfinance as yf
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+# --- خادم وهمي لإرضاء منفذ Port الخاص بسيرفر Render المجاني ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
+
+# تشغيل الخادم الوهمي في الخلفية
+threading.Thread(target=run_dummy_server, daemon=True).start()
+# -------------------------------------------------------------
 
 TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
