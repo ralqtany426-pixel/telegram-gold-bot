@@ -2,7 +2,7 @@ import telebot
 import yfinance as yf
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-TOKEN = "رقم_التوكن_الحقيقي_هنا"
+TOKEN = "8982114650:AAHWyIVaWtYOo1Hc_qxbja316rDaREw_RdE"
 bot = telebot.TeleBot(TOKEN)
 
 def analyze_all_timeframes():
