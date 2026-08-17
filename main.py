@@ -6,12 +6,11 @@ TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# رابط استضافة سيرفرك على Render (استبدل هذا الرابط برابط موقعك الحقيقي على Render)
 RENDER_URL = 'https://gold-signal-trader.onrender.com'
 
 @app.route('/')
 def home():
-    return "Bot is running live!"
+    return "Bot is running live and ready!"
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
@@ -22,12 +21,9 @@ def receive_message():
 
 @bot.message_handler(commands=['start'])
 def start(m):
-    bot.send_message(m.chat.id, "🤖 أهلاً بك يا عبد الله! بوت تداول الذهب يعمل الآن بنظام الـ Webhook بنجاح تام.")
+    bot.send_message(m.chat.id, "🤖 أهلاً بك يا عبد الله! يعمل بوت الذهب بنجاح تام.")
 
 if __name__ == '__main__':
-    # إزالة أي ويب هوك قديم وتعيين الرابط الجديد تلقائياً عند التشغيل
     bot.remove_webhook()
     bot.set_webhook(url=f'{RENDER_URL}/{TOKEN}')
-    
-    # تشغيل سيرفر Flask على بورت Render
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
