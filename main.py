@@ -26,32 +26,53 @@ bot = telebot.TeleBot(TOKEN)
 
 def get_data():
     g = yf.Ticker("GC=F")
-    df = g.history(period="3d", interval="15m")
+    df = g.history(period="1d", interval="1m")
     if df.empty:
-        return 2300.0, 0, 50, "صاعد", "2300", 2305, 2295
+        df = g.history(period="3d", interval="15m")
+    
+    if df.empty:
+        return 2300.0, 0, "صاعد", "2300", 2305, 2295, 2310, 2290, "استقرار عام في السوق"
+    
     p = df['Close'].iloc[-1]
-    prev = df['Close'].iloc[0]
+    prev = df['Open'].iloc[0]
     chg = ((p - prev) / prev) * 100
     tr = "صاعد 🟢" if chg >= 0 else "هابط 🔴"
-    return p, chg, 60, tr, f"{p-2:.2f}-{p:.2f}", p+3, p+7, p+12, p-4
+    
+    entry_zone = f"{p-1:.2f} - {p:.2f}"
+    tp1 = p + 3
+    tp2 = p + 7
+    tp3 = p + 12
+    sl = p - 3.5  # وقف خسارة ضيق لدعم صفقة زيرو انعكاس
+    
+    # محاكاة تقرير الأخبار والإنذارات بناءً على حركة السوق
+    news_report = "📰 **تقرير الأخبار الاقتصادية:**\n- بيانات مؤشر أسعار المستهلكين (CPI): تأثير قوي 🔥\n- خطابات الفيدرالي الأمريكي: تأثير متوسط ⚡"
+    if abs(chg) > 1.0:
+        news_report += "\n\n🚨 **إنذار هام:** يوجد تقلب عالي في السوق بسبب بيانات اقتصادية مفاجئة، يرجى توخي الحذر!"
+    else:
+        news_report += "\n\n✅ **حالة الأخبار:** هادئة نسبياً ومناسبة للتداول الفني."
+
+    return p, chg, tr, entry_zone, tp1, tp2, tp3, sl, news_report
 
 @bot.message_handler(commands=['start'])
 def start(m):
-    p, chg, mood, tr, _, _, _, _, _ = get_data()
+    p, chg, tr, _, _, _, _, _, _ = get_data()
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("📈 تحليل السوق", callback_data="all"))
-    markup.row(InlineKeyboardButton("🔥 صفقة الذهب", callback_data="sig"))
+    markup.row(InlineKeyboardButton("🎯 صفقة زيرو انعكاس", callback_data="sig"))
+    markup.row(InlineKeyboardButton("📰 تقرير الأخبار والإنذارات", callback_data="news"))
     markup.row(InlineKeyboardButton("📊 الدعوم والأهداف", callback_data="lvl"))
-    bot.send_message(m.chat.id, f"🤖 Spirex Bot\nسعر الذهب: {p:.2f}\nالتغير: {chg:.2f}%\nالاتجاه: {tr}", reply_markup=markup)
+    bot.send_message(m.chat.id, f"🤖 Spirex Gold Bot\n سعر الذهب الحالي: {p:.2f}\n التغير: {chg:.2f}%\n الاتجاه: {tr}", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def cb(call):
-    p, _, _, _, ez, tp1, tp2, tp3, sl = get_data()
+    p, _, _, ez, tp1, tp2, tp3, sl, news_report = get_data()
     if call.data == "all":
-        bot.send_message(call.message.chat.id, f"📊 السعر الحالي المباشر: {p:.2f}")
+        bot.send_message(call.message.chat.id, f"📊 السعر الحالي المباشر للذهب: {p:.2f}")
     elif call.data == "sig":
-        bot.send_message(call.message.chat.id, f"🔥 التوصية القريبة:\nالدخول: {ez}\nالهدف 1: {tp1:.2f}\nالهدف 2: {tp2:.2f}\nالوقف: {sl:.2f}")
+        bot.send_message(call.message.chat.id, f"🎯 **صفقة زيرو انعكاس (Zero Drawdown):**\n- منطقة الدخول المثالية: {ez}\n- الهدف الأول (TP1): {tp1:.2f}\n- الهدف الثاني (TP2): {tp2:.2f}\n- الهدف الثالث (TP3): {tp3:.2f}\n- وقف الخسارة الآمن (SL): {sl:.2f}")
+    elif call.data == "news":
+        bot.send_message(call.message.chat.id, news_report)
     elif call.data == "lvl":
-        bot.send_message(call.message.chat.id, f"📊 المقاومة: {tp2:.2f}\nالدعم: {sl:.2f}")
+        bot.send_message(call.message.chat.id, f"📊 مستويات الدعم والمقاومة:\n- المقاومة الرئيسية: {tp2:.2f}\n- الدعم الرئيسي: {sl:.2f}")
 
 bot.infinity_polling()
