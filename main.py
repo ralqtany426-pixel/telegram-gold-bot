@@ -6,7 +6,8 @@ TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-RENDER_URL = 'https://gold-signal-trader.onrender.com'
+# الرابط الجديد الصحيح
+RENDER_URL = 'https://telegram-gold-bot-2mth.onrender.com'
 
 @app.route('/')
 def home():
