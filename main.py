@@ -3,12 +3,10 @@ import random
 import telebot
 from telebot import types
 
-# توكن البوت (تأكد من وضعه هنا أو في متغيرات البيئة)
 TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 bot = telebot.TeleBot(TOKEN)
 
 def generate_gold_signal():
-    # أسعار دخول وأهداف قريبة ومنطقية تماماً للذهب
     base_price = round(random.uniform(4370.00, 4380.00), 2)
     entry = base_price
     stop_loss = round(entry - 12.00, 2)
@@ -49,18 +47,16 @@ def send_welcome(message):
     bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
 
 @bot.message_handler(func=lambda message: True)
-def handle_all_messages(message):
-    text = message.text
-    if "إشارة ذهب احترافية" in text:
+def handle_text(message):
+    if "إشارة ذهب احترافية" in message.text:
         signal = generate_gold_signal()
         bot.send_message(message.chat.id, signal)
-    elif "مناطق الدعم والمقاومة" in text:
-        bot.send_message(message.chat.id, "📈 مناطق الدعم والمقاومة للذهب:\n\n• دعم أول: 4360.00\n• دعم ثاني: 4345.00\n• مقاومة أولى: 4395.00\n• مقاومة ثانية: 4415.00")
-    elif "حاسبة إدارة المخاطر" in text:
-        bot.send_message(message.chat.id, "🛡️ حاسبة إدارة المخاطر:\n\nاختر حجم العقد (Lot Size) المناسب لحجم راس مالك لضمان التداول الآمن.")
+    elif "مناطق الدعم والمقاومة" in message.text:
+        bot.send_message(message.chat.id, "📈 مناطق الدعم والمقاومة الحالية للذهب.")
+    elif "حاسبة إدارة المخاطر" in message.text:
+        bot.send_message(message.chat.id, "🛡️ حاسبة إدارة المخاطر:")
     else:
         send_welcome(message)
 
 if __name__ == "__main__":
-    print("Bot restarted successfully from scratch...")
     bot.infinity_polling()
