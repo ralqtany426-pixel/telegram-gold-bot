@@ -57,12 +57,10 @@ def get_institutional_levels(price):
 
 # --- دالة حساب مستويات الدعم والمقاومة المؤسسية الاحترافية ---
 def get_support_resistance_levels(price):
-    # مقاوماعات قوية تعتمد على مسافة السعر الحالي
     res3 = round(price + 25.0, 2)
     res2 = round(price + 15.0, 2)
     res1 = round(price + 7.0, 2)
     
-    # دعوم قوية بناءً على هيكل السوق والسيولة
     sup1 = round(price - 7.0, 2)
     sup2 = round(price - 15.0, 2)
     sup3 = round(price - 28.0, 2)
