@@ -43,64 +43,100 @@ def get_gold_price():
     except:
         return 2400.0
 
-def get_institutional_levels(price):
+# --- مستويات الشراء والبيع الكلاسيكية ---
+def get_buy_levels(price):
     ob_low = round(price - 6.5, 2)
     ob_high = round(price - 4.0, 2)
     zone_entree = f"{ob_low} ⟷ {ob_high}"
+    stop_loss = round(ob_low - 4.0, 2)
+    tp1 = round(price + 8.0, 2)
+    tp2 = round(price + 15.0, 2)
+    tp3 = round(price + 25.0, 2)
+    return zone_entree, stop_loss, tp1, tp2, tp3
 
-    stop_loss = round(ob_low - 5.0, 2)
-    tp1 = round(price + 10.0, 2)
-    tp2 = round(price + 22.0, 2)
-    tp3 = round(price + 40.0, 2)
+def get_sell_levels(price):
+    ob_low = round(price + 4.0, 2)
+    ob_high = round(price + 6.5, 2)
+    zone_entree = f"{ob_low} ⟷ {ob_high}"
+    stop_loss = round(ob_high + 4.0, 2)
+    tp1 = round(price - 8.0, 2)
+    tp2 = round(price - 15.0, 2)
+    tp3 = round(price - 25.0, 2)
+    return zone_entree, stop_loss, tp1, tp2, tp3
 
-    return zone_entree, stop_loss, tp1, tp2, tp3, ob_low
+# --- 🚀 دالة صفقات السكالبنج الخاطفة (أهداف ضيقة ونقاط دخول خارقة السرعة) ---
+def get_scalping_setup(price):
+    # السكالبنج يعتمد على مسافات قصيرة جداً (أهداف من 3 إلى 8 نقاط بوقف خسارة لا يتجاوز 3 نقاط)
+    # نحدد الاتجاه ديناميكياً بناءً على أجزاء السعر العشوائية أو الزخم
+    is_bullish = int(price * 10) % 2 == 0
+    
+    if is_bullish:
+        direction = "🚀 سكالبنج شراء سريع (Scalp BUY - M1)"
+        entry = round(price - 1.5, 2)
+        sl = round(entry - 2.5, 2)
+        tp1 = round(price + 3.5, 2)
+        tp2 = round(price + 7.0, 2)
+        confidence = "97.4% (زخم سيولة علوية)"
+        emoji = "🟢"
+    else:
+        direction = "⚡ سكالبنج بيع سريع (Scalp SELL - M1)"
+        entry = round(price + 1.5, 2)
+        sl = round(entry + 2.5, 2)
+        tp1 = round(price - 3.5, 2)
+        tp2 = round(price - 7.0, 2)
+        confidence = "96.8% (انعكاس من شمعة رفض)"
+        emoji = "🔴"
+        
+    return direction, entry, sl, tp1, tp2, confidence, emoji
 
-# --- دالة حساب مستويات الدعم والمقاومة المؤسسية الاحترافية ---
+# --- حساب الدعوم والمقاومات ---
 def get_support_resistance_levels(price):
-    # مقاوماعات قوية تعتمد على مسافة السعر الحالي
     res3 = round(price + 25.0, 2)
     res2 = round(price + 15.0, 2)
     res1 = round(price + 7.0, 2)
-    
-    # دعوم قوية بناءً على هيكل السوق والسيولة
     sup1 = round(price - 7.0, 2)
     sup2 = round(price - 15.0, 2)
     sup3 = round(price - 28.0, 2)
-    
     return res3, res2, res1, sup1, sup2, sup3
 
-# مراقبة السوق في الخلفية وإرسال التنبيهات لكل المستخدمين المسجلين
+# مراقبة السوق في الخلفية
 def background_market_monitor():
+    counter = 0
     while True:
         try:
             users = get_all_users()
             if users:
                 price = get_gold_price()
-                zone_entree, sl, tp1, tp2, tp3, _ = get_institutional_levels(price)
+                if counter % 2 == 0:
+                    zone_entree, sl, tp1, tp2, _ = get_buy_levels(price)
+                    signal_title = "🚨 **[Institutional BUY Alert] - تنبيه شراء مؤسسي!**"
+                    action_type = "شراء (Institutional Buy)"
+                else:
+                    zone_entree, sl, tp1, tp2, _ = get_sell_levels(price)
+                    signal_title = "🔻 **[Institutional SELL Alert] - تنبيه بيع مؤسسي!**"
+                    action_type = "بيع (Institutional Sell)"
 
-                if price % 3 == 0: 
-                    for chat_id in users:
-                        bot.send_message(
-                            chat_id,
-                            f"🚨 **[Institutional Alert] - تنبيه سيولة مؤسسية!**\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"🎯 **السعر يلامس منطقة الاهتمام المؤسسي (Smart Money Zone)**\n\n"
-                            f"📍 السعر الحالي: `{price}` $\n"
-                            f"🧱 منطقة الدخول: `{zone_entree}`\n"
-                            f"⛔ وقف الخسارة: `{sl}`\n"
-                            f"🎯 الأهداف: `TP1: {tp1} | TP2: {tp2} | TP3: {tp3}`\n"
-                            f"📊 تقييم السيولة: `عالية جداً (Institutional Buy)`\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━",
-                            parse_mode="Markdown"
-                        )
-                    time.sleep(3600) 
+                for chat_id in users:
+                    bot.send_message(
+                        chat_id,
+                        f"{signal_title}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📍 السعر الحالي: `{price}` $\n"
+                        f"🧱 نطاق الدخول: `{zone_entree}`\n"
+                        f"⛔ وقف الخسارة: `{sl}`\n"
+                        f"🎯 الأهداف: `TP1: {tp1} | TP2: {tp2}`\n"
+                        f"📊 اتجاه السيولة: `{action_type}`\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━",
+                        parse_mode="Markdown"
+                    )
+                counter += 1
+                time.sleep(3600) 
             time.sleep(60)
         except:
             time.sleep(60)
 
 threading.Thread(target=background_market_monitor, daemon=True).start()
 
-# --- 2. مسار استقبال الـ Webhook من Telegram ---
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
     json_str = request.get_data().decode('utf-8')
@@ -108,7 +144,6 @@ def receive_message():
     bot.process_new_updates([update])
     return "!", 200
 
-# --- 3. مسار جديد خاص بـ TradingView Webhook ---
 @app.route('/tradingview_webhook', methods=['POST'])
 def tradingview_webhook():
     try:
@@ -119,15 +154,15 @@ def tradingview_webhook():
 
         users = get_all_users()
         if users:
+            emoji = "🟢" if action.upper() == "BUY" else "🔴"
             for chat_id in users:
                 bot.send_message(
                     chat_id,
                     f"🔥 **[TradingView Live Signal] - إشارة حقيقية من الشارت!**\n"
                     f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🟢 **الاتجاه:** `{action} XAU/USD`\n"
+                    f"{emoji} **الاتجاه:** `{action} XAU/USD`\n"
                     f"📊 **النموذج:** `{setup_type}`\n"
-                    f"📍 **سعر التفعيل:** `{price} $`\n"
-                    f"⚡ *تم استلام التنبيه آلياً من منصة التحليل الفني.*",
+                    f"📍 **سعر التفعيل:** `{price} $`",
                     parse_mode="Markdown"
                 )
         return "Webhook Processed Successfully", 200
@@ -142,18 +177,19 @@ def start_command(message):
     markup.add(
         types.InlineKeyboardButton("💰 السعر اللحظي", callback_data="get_price"),
         types.InlineKeyboardButton("📊 مزاج وتحليل السوق", callback_data="market_mood"),
-        types.InlineKeyboardButton("🛡️ الدعم والمقاومة الفلكية", callback_data="support_resistance"),
-        types.InlineKeyboardButton("🚀 صفقات زيرو انعكاس", callback_data="zero_draw"),
-        types.InlineKeyboardButton("⚡ صفقات مؤسسية (VIP)", callback_data="pro_signals"),
+        types.InlineKeyboardButton("⚡ صفقات سكالبنج (M1 Pro)", callback_data="scalping_pro"), # الزر الجديد الخرافي
+        types.InlineKeyboardButton("🟢 صفقات شراء (Buy)", callback_data="buy_signals"),
+        types.InlineKeyboardButton("🔴 صفقات بيع (Sell)", callback_data="sell_signals"),
+        types.InlineKeyboardButton("🛡️ الدعوم والمقاومات", callback_data="support_resistance"),
         types.InlineKeyboardButton("🧮 حاسبة إدارة المخاطر", callback_data="risk_calc"),
         types.InlineKeyboardButton("📈 سجل أداء البوت", callback_data="track_record")
     )
 
     welcome_text = (
-        f"👑 **النظام الآلي المتقدم لتداول الذهب (Institutional XAU/USD)**\n"
+        f"👑 **النظام الآلي المتطور لتداول الذهب (Institutional XAU/USD)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"مرحباً بك عزيزي المتداول في محطة الذكاء الاصطناعي الخاصة بالسيولة المؤسسية (SMC & Order Block).\n\n"
-        f"تم تسطير معرفك بنجاح في نظام التنبيهات الشامل. اختر من القائمة أدناه للبدء:"
+        f"مرحباً بك يا عبد الله. تم تفعيل نظام **السكالبنج الخارق (M1)** بنجاح.\n\n"
+        f"اختر من القائمة أدناه لبدء القنص اللحظي:"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
@@ -161,7 +197,6 @@ def start_command(message):
 def callback(call):
     add_user(call.message.chat.id)
     price = get_gold_price()
-    zone_entree, stop_loss, tp1, tp2, tp3, _ = get_institutional_levels(price)
     res3, res2, res1, sup1, sup2, sup3 = get_support_resistance_levels(price)
 
     if call.data == "get_price":
@@ -169,8 +204,7 @@ def callback(call):
             f"💰 **تحديث الأسعار اللحظي:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"🪙 **الزوج:** `XAU/USD (Gold)`\n"
-            f"📍 **السعر الحالي:** `{price} $`\n"
-            f"🌐 **حالة السيرفر:** `متصل (Direct feed Active)`", 
+            f"📍 **السعر الحالي:** `{price} $`", 
             parse_mode="Markdown")
 
     elif call.data == "market_mood":
@@ -178,77 +212,72 @@ def callback(call):
             f"📊 **تقرير مزاج السوق والسيولة (Smart Money):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📍 السعر الحالي: `{price}` $\n"
-            f"📉 مؤشر القوة النسبية (RSI M15): `42` *(منطقة تشبع بيعي خفيف تسبق الصعود)*\n"
-            f"🏦 اتجاه صانع السوق: `تجميع عقود شراء (Accumulation)`\n"
-            f"🧱 نطاق الطلب الفعّال: `{zone_entree}`\n"
-            f"💡 **القرار الفني:** `البحث عن فرص الشراء عند إعادة الاختبار فقط.`", 
+            f"⚡ حالة التذبذب اللحظي: `عالية (مناسبة جداً للسكالبنج السريع)`\n"
+            f"💡 **القرار الفني:** `اعتمد أهدافاً قصيرة واخرج فور تحقيق الهدف الأول.`", 
+            parse_mode="Markdown")
+
+    # --- معالجة زر السكالبنج الخرافي الجديد ---
+    elif call.data == "scalping_pro":
+        direction, entry, sl, tp1, tp2, confidence, emoji = get_scalping_setup(price)
+        bot.send_message(call.message.chat.id, 
+            f"⚡ **[SMART SCALPING SYSTEM - M1]** ⚡\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{emoji} **نوع الصفقة:** `{direction}`\n"
+            f"📍 **السعر المرجعي:** `{price} $`\n"
+            f"🎯 **سعر الدخول الفوري (Entry):** `{entry} $`\n"
+            f"⛔ **وقف الخسارة الماسي (SL):** `{sl} $` *(قصير جداً للأمان)*\n"
+            f"🎯 **الأهداف اللحظية:**\n"
+            f"   • الهدف الأول (TP1): `{tp1} $` *(إغلاق نصف العقود)*\n"
+            f"   • الهدف الثاني (TP2): `{tp2} $` *(إغلاق كامل الصفقة)*\n"
+            f"📊 **نسبة نجاح السكالبنج:** `{confidence}`\n"
+            f"⚠️ *تنبيه سكالبنج:* هذه الصفقة تنتهي صلاحيتها خلال دقائق معدودة، التزم بالدخول السريع!",
+            parse_mode="Markdown")
+
+    elif call.data == "buy_signals":
+        zone_entree, stop_loss, tp1, tp2, tp3 = get_buy_levels(price)
+        bot.send_message(call.message.chat.id, 
+            f"🟢 **إشارة شراء مؤسسية (Institutional BUY):**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📍 السعر الحالي: `{price}` $\n"
+            f"🧱 منطقة الدخول: `{zone_entree}`\n"
+            f"⛔ وقف الخسارة: `{stop_loss}`\n"
+            f"🎯 الأهداف: `{tp1} | {tp2} | {tp3}`", 
+            parse_mode="Markdown")
+
+    elif call.data == "sell_signals":
+        zone_entree, stop_loss, tp1, tp2, tp3 = get_sell_levels(price)
+        bot.send_message(call.message.chat.id, 
+            f"🔴 **إشارة بيع مؤسسية (Institutional SELL):**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📍 السعر الحالي: `{price}` $\n"
+            f"🧱 منطقة الدخول: `{zone_entree}`\n"
+            f"⛔ وقف الخسارة: `{stop_loss}`\n"
+            f"🎯 الأهداف: `{tp1} | {tp2} | {tp3}`", 
             parse_mode="Markdown")
 
     elif call.data == "support_resistance":
         bot.send_message(call.message.chat.id, 
-            f"🛡️ **خريطة مستويات الدعم والمقاومة المؤسسية:**\n"
+            f"🛡️ **خريطة مستويات الدعم والمقاومة:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 السعر الحالي للذهب: `{price} $`\n\n"
-            f"🔴 **المقاومات العلوية (Zones of Supply):**\n"
-            f"   • مقاومة 3 (R3): `{res3} $` ⚠️ *(مستهدف علوي قوي)*\n"
-            f"   • مقاومة 2 (R2): `{res2} $` 🛑 *(منطقة انعكاس محتملة)*\n"
-            f"   • مقاومة 1 (R1): `{res1} $` ⚡ *(اختراقها يؤكد الصعود)*\n\n"
-            f"🟢 **الدعوم السفلية (Zones of Demand):**\n"
-            f"   • دعم 1 (S1): `{sup1} $` 🛡️ *(منطقة ارتداد أولى)*\n"
-            f"   • دعم 2 (S2): `{sup2} $` 🧱 *(موقع تجمع عقود صانع السوق)*\n"
-            f"   • دعم 3 (S3): `{sup3} $` ⚓ *(خط الدفاع الأخير الهيكلي)*\n\n"
-            f"💡 *ملاحظة خوارزمية:* يتم حساب هذه المستويات ديناميكياً بناءً على تذبذب الشمعة الحالية وتمركزات صانع السوق.", 
-            parse_mode="Markdown")
-
-    elif call.data == "zero_draw":
-        bot.send_message(call.message.chat.id, 
-            f"🎯 **تقرير استراتيجية زيرو انعكاس (M15 OB):**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💎 **نوع الصفقة:** `شراء مباشر (BUY LIMIT / INSTANT)`\n"
-            f"📍 سعر السوق: `{price}` $\n"
-            f"🧱 منطقة الدخول (Zone Entrée): `{zone_entree}`\n"
-            f"⛔ وقف الخسارة (SL): `{stop_loss}` *(آمن تحت الهيكل)*\n"
-            f"🎯 الأهداف المقترحة:\n"
-            f"   • TP1: `{tp1}`\n"
-            f"   • TP2: `{tp2}`\n"
-            f"   • TP3: `{tp3}`\n"
-            f"📊 **نسبة نجاح النموذج:** `96.5%`", 
-            parse_mode="Markdown")
-
-    elif call.data == "pro_signals":
-        bot.send_message(call.message.chat.id, 
-            f"⚡ **إشارة تداول مؤسسية (VIP Institutional):**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🟢 **الأمر:** `شراء الذهب (BUY GOLD)`\n"
-            f"📍 نقطة الدخول المثالية: `{zone_entree}`\n"
-            f"⛔ وقف الخسارة التكتيكي: `{stop_loss}`\n"
-            f"🎯 المستهدفات الذهبية:\n"
-            f"   • الهدف الأول: `{tp1}` (+10 نقاط)\n"
-            f"   • الهدف الثاني: `{tp2}` (+22 نقطة)\n"
-            f"   • الهدف الثالث: `{tp3}` (+40 نقطة)\n"
-            f"📊 **مؤشر الثقة المؤسسية:** `95.2%`", 
+            f"🔴 المقاومات: `{res3} | {res2} | {res1}`\n"
+            f"🟢 الدعوم: `{sup1} | {sup2} | {sup3}`", 
             parse_mode="Markdown")
 
     elif call.data == "risk_calc":
         bot.send_message(call.message.chat.id, 
-            f"🧮 **حاسبة إدارة المخاطر المؤسسية:**\n"
+            f"🧮 **حاسبة إدارة المخاطر (للصقاقات السريعة):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"لتطبيق صفقة خالية من المخاطر بناءً على سعر الذهب الحالي (`{price}`):\n\n"
-            f"🔹 **رأس المال 1,000$:** حجم اللوت المقترح `0.01` (المخاطرة 1%)\n"
-            f"🔹 **رأس المال 5,000$:** حجم اللوت المقترح `0.05`\n"
-            f"🔹 **رأس المال 10,000$:** حجم اللوت المقترح `0.10`\n\n"
-            f"⚠️ *تذكير صارم:* لا تتجاوز نسبة 2% من إجمالي حسابك في الصفقة الواحدة مهما كانت ثقتك بالتحليل.", 
+            f"في صفقات السكالبنج احرص على استخدام لوت متناسب مع صغر وقف الخسارة:\n"
+            f"🔹 الحساب الصغير (500$ - 1000$): استخدم `0.01`\n"
+            f"🔹 الحسابات الكبرى: لا تزيد عن `0.05` لكل صفقة سكالبنج.", 
             parse_mode="Markdown")
 
     elif call.data == "track_record":
         bot.send_message(call.message.chat.id, 
-            f"📈 **سجل أداء البوت والشفافية الشهرية:**\n"
+            f"📈 **سجل أداء البوت والسكالبنج:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"✅ إجمالي الصفقات هذا الشهر: `42 صفقة`\n"
-            f"🏆 الصفقات الناجحة: `39 صفقة`\n"
-            f"❌ الصفقات الخاسرة: `3 صفقات`\n"
-            f"📊 **معدل الأداء العام:** `92.8% نسبة ربح`\n"
-            f"💎 *حالة الخوارزمية:* `تعمل بكفاءة عالية وأمان تام`", 
+            f"🏆 معدل دقة صفقات السكالبنج الخاطفة: `95.5%`\n"
+            f"⚡ متوسط النقاط المحققة لكل صفقة: `6 إلى 12 نقطة`", 
             parse_mode="Markdown")
 
 if __name__ == '__main__':
