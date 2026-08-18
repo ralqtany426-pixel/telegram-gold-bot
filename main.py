@@ -1,26 +1,24 @@
-import time
+import os
+from flask import Flask
+from threading import Thread
 
-def risk_management_filter(market_trend: str, signal_type: str) -> dict:
-    market_trend = market_trend.capitalize()
-    signal_type = signal_type.upper()
-    
-    if market_trend == "Bullish" and signal_type == "BUY":
-        return {"status": "APPROVED", "message": "🟢 تم قبول الصفقة: السوق صاعد للشراء فقط."}
-    elif market_trend == "Bearish" and signal_type == "SELL":
-        return {"status": "APPROVED", "message": "🔴 تم قبول الصفقة: السوق هابط للبيع فقط."}
-    else:
-        return {"status": "REJECTED", "message": "🚫 تم التحفظ على الصفقة عكس الاتجاه."}
+app = Flask('')
 
-if __name__ == "__main__":
-    print("🤖 بوت إدارة المخاطر يعمل الآن ومستعد لفحص السوق...")
-    
-    while True:
-        # هنا يتم فحص السوق باستمرار لضمان عدم إغلاق السيرفر على Render
-        current_market = "Bullish"
-        incoming_signal = "BUY"
-        
-        result = risk_management_filter(current_market, incoming_signal)
-        print(result["message"])
-        
-        # الانتظار لمدة 60 ثانية قبل الفحص التالي
-        time.sleep(60)
+@app.route('/')
+def home():
+    I am alive!
+
+
+def run():
+    # Render يزودنا برقم الport تلقائياً عبر المتغير البيئي PORT
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# استدعِ هذه الدالة قبل تشغيل البوت الخاص بك
+if __name__ == '__main__':
+    keep_alive()
+    # هنا تضع كود تشغيل بوت تليجرام الخاص بك (مثل bot.infinity_polling())
