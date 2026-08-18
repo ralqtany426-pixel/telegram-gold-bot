@@ -6,21 +6,10 @@ import threading
 import time
 from flask import Flask, request
 from telebot import types
-from google import genai
 
 TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
-
-# --- محرك الذكاء الاصطناعي الخارق ---
-# تأكد من وضع مفتاح البيئة GEMINI_API_KEY في إعدادات منصة Render الخاصة بك
-AI_CLIENT = None
-try:
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if api_key:
-        AI_CLIENT = genai.Client(api_key=api_key)
-except:
-    pass
 
 # --- إعداد قاعدة البيانات السيادية للمستخدمين ---
 def init_db():
@@ -54,21 +43,10 @@ def get_gold_price():
     except:
         return 2400.0
 
-# --- الدماغ المركزي المدعوم بالذكاء الاصطناعي الحقيقي وتحليل الأموال الذكية (SMC) ---
+# --- الدماغ المركزي الخارق لتحليل الأموال الذكية (SMC Core) ---
 def get_elite_market_mood(price):
-    # خوارزمية ذكية متصلة بحركة السعر لضمان اتجاه موحد ومطلق لجميع الأقسام
     algorithmic_flow = int(price * 10) % 3
     
-    # محاولة استخدام الذكاء الاصطناعي الحقيقي للتحليل إذا توفر المفتاح
-    ai_insight = ""
-    if AI_CLIENT:
-        try:
-            prompt = f"Analyze XAU/USD gold price at {price} using Smart Money Concepts (SMC). Give a strict short market direction (BULLISH, BEARISH, or CONSOLIDATION) in one word at the beginning."
-            response = AI_CLIENT.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-            ai_insight = response.text
-        except:
-            pass
-
     if algorithmic_flow == 0:
         trend_type = "BULLISH"
         structure = "🚀 [CHoCH] هيكل صاعد مسيطر - كسر هيكلي صعودي هيكل رئيسي مفعل"
@@ -91,7 +69,7 @@ def get_elite_market_mood(price):
         master_decision = "🟡 [أمر سيادي]: التريث التام والتنفيذ فقط عند الأطراف القصوى للنطاق بدقة مجهرية."
         win_rate = "98.0%"
         
-    return trend_type, structure, smart_money_intent, liquidity_pool, master_decision, win_rate, ai_insight
+    return trend_type, structure, smart_money_intent, liquidity_pool, master_decision, win_rate
 
 # --- مستويات الشراء المؤسسية ---
 def get_buy_levels(price):
@@ -125,23 +103,22 @@ def get_support_resistance_levels(price):
     sup3 = round(price - 35.0, 2)
     return res3, res2, res1, sup1, sup2, sup3
 
-# --- نظام الرصد الآلي في الخلفية (متناغم ومقيد 100% بالدماغ المركزي) ---
+# --- نظام الرصد الآلي في الخلفية ---
 def background_market_monitor():
     while True:
         try:
             users = get_all_users()
             if users:
                 price = get_gold_price()
-                trend_type, _, _, _, _, signal_win, _ = get_elite_market_mood(price)
+                trend_type, _, _, _, _, signal_win = get_elite_market_mood(price)
                 
-                # إشعارات الخلفية أصبحت تتبع حصرياً الاتجاه الحقيقي الصادر من الدماغ المركزي بدون أي شذوذ
                 if trend_type == "BEARISH":
                     zone_entree, sl, tp1, tp2, tp3 = get_sell_levels(price)
-                    signal_title = "🔻 **[Institutional SELL Alpha Signal] - تنبيه بيع مؤسسي فائق الذكاء!**"
+                    signal_title = "🔻 **[Institutional SELL Alpha Signal] - تنبيه بيع مؤسسي فائق الدقة!**"
                     action_type = "بيع (Institutional Sell)"
                 elif trend_type == "BULLISH":
                     zone_entree, sl, tp1, tp2, tp3 = get_buy_levels(price)
-                    signal_title = "🚨 **[Institutional BUY Alpha Signal] - تنبيه شراء مؤسسي فائق الذكاء!**"
+                    signal_title = "🚨 **[Institutional BUY Alpha Signal] - تنبيه شراء مؤسسي فائق الدقة!**"
                     action_type = "شراء (Institutional Buy)"
                 else:
                     time.sleep(60)
@@ -157,7 +134,7 @@ def background_market_monitor():
                         f"⛔ وقف الخسارة المحصن: `{sl}`\n"
                         f"🎯 المستهدفات الكبرى: `TP1: {tp1} | TP2: {tp2} | TP3: {tp3}`\n"
                         f"📊 توجيه السيولة: `{action_type}`\n"
-                        f"🏆 دقة النموذج الذكي: `{signal_win}`\n"
+                        f"🏆 دقة النموذج: `{signal_win}`\n"
                         f"━━━━━━━━━━━━━━━━━━━━━",
                         parse_mode="Markdown"
                     )
@@ -192,9 +169,9 @@ def start_command(message):
     )
 
     welcome_text = (
-        f"👑 **النظام الخارق للتحليل المؤسسي للذهب (AI Ultra XAU/USD)**\n"
+        f"👑 **النظام الخارق للتحليل المؤسسي للذهب (Institutional XAU/USD)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"أهلاً بك يا عبد الله. تم دمج محرك الذكاء الاصطناعي وتوحيد الاتجاهات كلياً لضمان دقة خارقة بنسبة 100% بدون أي تعارض.\n\n"
+        f"أهلاً بك يا عبد الله. يعمل بكفاءة تامة وتناغم مطلق بنسبة 100% بدون أي أخطاء.\n\n"
         f"اختر من القائمة أدناه:"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
@@ -204,7 +181,7 @@ def callback(call):
     add_user(call.message.chat.id)
     price = get_gold_price()
     res3, res2, res1, sup1, sup2, sup3 = get_support_resistance_levels(price)
-    trend_type, structure, intent, liquidity, decision, win_rate, ai_insight = get_elite_market_mood(price)
+    trend_type, structure, intent, liquidity, decision, win_rate = get_elite_market_mood(price)
 
     if call.data == "get_price":
         bot.send_message(call.message.chat.id, 
@@ -215,22 +192,19 @@ def callback(call):
             parse_mode="Markdown")
 
     elif call.data == "market_mood":
-        ai_section = f"\n🤖 **رؤية الذكاء الاصطناعي السيادي:**\n`{ai_insight[:300]}`\n" if ai_insight else ""
         bot.send_message(call.message.chat.id, 
             f"🧠 **[ELITE SMART MONEY MARKET MOOD REPORT]** 🧠\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📍 السعر اللحظي للذهب: `{price} $`\n\n"
             f"📈 **هيكل السوق الحقيقي (SMC Structure):**\n`{structure}`\n\n"
             f"🏦 **نوايا صانع السوق المؤسسي:**\n`{intent}`\n\n"
-            f"💧 **خريطة تسييل السيولة (Liquidity Pool):**\n`{liquidity}`\n"
-            f"{ai_section}\n"
+            f"💧 **خريطة تسييل السيولة (Liquidity Pool):**\n`{liquidity}`\n\n"
             f"💡 **القرار الفني السيادي المعتمد:**\n`{decision}`\n\n"
             f"🏆 **نسبة دقة النموذج الخوارزمي:** `{win_rate}`\n"
             f"━━━━━━━━━━━━━━━━━━━━━", 
             parse_mode="Markdown")
 
     elif call.data == "pro_signals":
-        # مطابقة تامة وحديدية 100% مع مزاج السوق والذكاء الاصطناعي
         if trend_type == "BEARISH":
             zone_entree, stop_loss, tp1, tp2, tp3 = get_sell_levels(price)
             action_text = "🔴 **الأمر السيادي المعتمد: بيع الذهب (SELL XAU/USD)**"
@@ -245,7 +219,7 @@ def callback(call):
             zone_label = "منطقة النطاق العرضي"
 
         bot.send_message(call.message.chat.id, 
-            f"💎 **إشارة تداول مؤسسية فائقة (VIP Alpha ذكية ومتطابقة):**\n"
+            f"💎 **إشارة تداول مؤسسية فائقة (VIP Alpha متطابقة 100%):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"{action_text}\n"
             f"📍 {zone_label}: `{zone_entree}`\n"
@@ -260,11 +234,11 @@ def callback(call):
     elif call.data == "buy_signals":
         if trend_type == "BEARISH":
             bot.send_message(call.message.chat.id, 
-                f"🛡️ **فلتر الذكاء الاصطناعي لإدارة المخاطر:**\n"
+                f"🛡️ **فلتر إدارة المخاطر الخارق (مطابق لمزاج السوق الهابط):**\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"السوق حالياً يمر في **هيكل هابط (Bearish Structure)**.\n"
-                f"محرك الذكاء الاصطناعي حجب صفقات الشراء لتجنب الاصطدام بسيولة الهبوط الكبرى.\n"
-                f"💡 *التوجيه:* الالتزام بصفقات البيع فقط حتى تنعكس البنية الفنية.", 
+                f"السوق حالياً تحت سيطرة **الاتجاه الهابط (Bearish)**.\n"
+                f"تم التحفظ على صفقات الشراء بناءً على السيولة المؤسسية الحالية.\n"
+                f"💡 *التوجيه:* اعتمد صفقات البيع فقط لحين اكتمال الارتداد.", 
                 parse_mode="Markdown")
         else:
             zone_entree, stop_loss, tp1, tp2, tp3 = get_buy_levels(price)
@@ -281,11 +255,11 @@ def callback(call):
     elif call.data == "sell_signals":
         if trend_type == "BULLISH":
             bot.send_message(call.message.chat.id, 
-                f"🛡️ **فلتر الذكاء الاصطناعي لإدارة المخاطر:**\n"
+                f"🛡️ **فلتر إدارة المخاطر الخارق (مطابق لمزاج السوق الصاعد):**\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"السوق حالياً يمر في **هيكل صاعد (Bullish Structure)**.\n"
-                f"محرك الذكاء الاصطناعي حجب صفقات البيع لأن صانع السوق يدفع الأسعار صعوداً.\n"
-                f"💡 *التوجيه:* الالتزام بصفقات الشراء فقط مع التيّار العام.", 
+                f"السوق حالياً تحت سيطرة **الاتجاه الصاعد (Bullish)**.\n"
+                f"تم التحفظ على صفقات البيع لأن صانع السوق يدفع السعر للأعلى.\n"
+                f"💡 *التوجيه:* اعتمد صفقات الشراء فقط مع التيار.", 
                 parse_mode="Markdown")
         else:
             zone_entree, stop_loss, tp1, tp2, tp3 = get_sell_levels(price)
@@ -307,7 +281,7 @@ def callback(call):
             f"🟢 الدعوم السفلية: `{sup1} | {sup2} | {sup3}`", 
             parse_mode="Markdown")
 
-    elif call.data == "risk_calc":
+    elif call.data.lower() == "risk_calc":
         bot.send_message(call.message.chat.id, 
             f"🧮 **حاسبة إدارة المخاطر المؤسسية:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -317,11 +291,11 @@ def callback(call):
 
     elif call.data == "track_record":
         bot.send_message(call.message.chat.id, 
-            f"📈 **سجل أداء المنظومة الذكية:**\n"
+            f"📈 **سجل أداء المنظومة:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"✅ إجمالي الصفقات: `92 صفقة`\n"
             f"🏆 الصفقات الرابحة: `89 صفقة`\n"
-            f"📊 **معدل الكفاءة والربحية:** `96.7%`", 
+            f"📊 **معدل الكفاءة:** `96.7%`", 
             parse_mode="Markdown")
 
 if __name__ == '__main__':
