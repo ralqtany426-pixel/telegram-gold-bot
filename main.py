@@ -46,27 +46,41 @@ def get_gold_price():
     except:
         return 4367.47
 
+# --- دالة حساب المستويات الديناميكية حسب الاتجاه (شراء أو بيع) ---
 def get_institutional_levels(price):
-    ob_low = round(price - 6.5, 2)
-    ob_high = round(price - 4.0, 2)
-    zone_entree = f"{ob_low} ⟷ {ob_high}"
+    change_from_open = price - open_daily_price
+    
+    # إذا كان السعر أقل من الافتتاح (ترند هابط)، نعكس المستويات لتكون لصفقات البيع
+    if change_from_open < 0:
+        signal_type = "📉 بيع (SELL)"
+        ob_low = round(price + 3.0, 2)
+        ob_high = round(price + 6.0, 2)
+        zone_entree = f"{ob_low} ⟷ {ob_high} (منطقة عرض)"
+        stop_loss = round(ob_high + 5.0, 2)
+        tp1 = round(price - 8.0, 2)
+        tp2 = round(price - 18.0, 2)
+        tp3 = round(price - 32.0, 2)
+    else:
+        signal_type = "📈 شراء (BUY)"
+        ob_low = round(price - 6.5, 2)
+        ob_high = round(price - 4.0, 2)
+        zone_entree = f"{ob_low} ⟷ {ob_high} (منطقة طلب)"
+        stop_loss = round(ob_low - 5.0, 2)
+        tp1 = round(price + 10.0, 2)
+        tp2 = round(price + 22.0, 2)
+        tp3 = round(price + 40.0, 2)
 
-    stop_loss = round(ob_low - 5.0, 2)
-    tp1 = round(price + 10.0, 2)
-    tp2 = round(price + 22.0, 2)
-    tp3 = round(price + 40.0, 2)
-
-    return zone_entree, stop_loss, tp1, tp2, tp3, ob_low
+    return zone_entree, stop_loss, tp1, tp2, tp3, signal_type
 
 def get_support_resistance_levels(price):
     res3 = round(price + 25.0, 2)
     res2 = round(price + 15.0, 2)
     res1 = round(price + 7.0, 2)
-    
+
     sup1 = round(price - 7.0, 2)
     sup2 = round(price - 15.0, 2)
     sup3 = round(price - 28.0, 2)
-    
+
     return res3, res2, res1, sup1, sup2, sup3
 
 # --- نظام مراقبة السوق الخارق في الخلفية ---
@@ -77,10 +91,10 @@ def background_market_monitor():
             users = get_all_users()
             if users:
                 price = get_gold_price()
-                
+
                 if last_price is not None:
                     diff = round(price - last_price, 2)
-                    
+
                     if diff <= -2.5:
                         for chat_id in users:
                             bot.send_message(
@@ -90,7 +104,7 @@ def background_market_monitor():
                                 f"🔻 تم رصد تدفق بيعي ضخم وهبوط سريع!\n"
                                 f"📍 السعر الحالي: `{price} $`\n"
                                 f"📊 التغير اللحظي: `{diff} $`\n"
-                                f"💡 *النصيحة:* ترقب إعادة الاختبار (Retest) لمنطقة العرض قبل اتخاذ القرار.",
+                                f"💡 *النصيحة:* ترقب إعادة الاختبار (Retest) لمنطقة العرض للبيع.",
                                 parse_mode="Markdown"
                             )
                     elif diff >= 2.5:
@@ -169,7 +183,7 @@ def start_command(message):
 def callback(call):
     add_user(call.message.chat.id)
     price = get_gold_price()
-    zone_entree, stop_loss, tp1, tp2, tp3, _ = get_institutional_levels(price)
+    zone_entree, stop_loss, tp1, tp2, tp3, signal_type = get_institutional_levels(price)
     res3, res2, res1, sup1, sup2, sup3 = get_support_resistance_levels(price)
 
     if call.data == "get_price":
@@ -182,19 +196,15 @@ def callback(call):
             parse_mode="Markdown")
 
     elif call.data == "market_mood":
-        # حساب نسبة التغير اليومي ومزاج السوق بذكاء
         change_from_open = round(((price - open_daily_price) / open_daily_price) * 100, 2)
         if change_from_open < 0:
             mood_status = "هابط (Bearish Control)"
-            mood_percent = f"{abs(round(change_from_open * 45 + 50, 1))}% هبوط"
             advice = "البحث عن فرص البيع من مناطق المقاومة أو انتظار كسر الهيكل."
         elif change_from_open > 0:
             mood_status = "صاعد (Bullish Control)"
-            mood_percent = f"{round(change_from_open * 45 + 50, 1)}% صعود"
             advice = "البحث عن فرص الشراء عند مناطق الطلب وإعادة الاختبار."
         else:
-            mood_status = "مححايد (Neutral Market)"
-            mood_percent = "51% محايد"
+            mood_status = "محايد (Neutral Market)"
             advice = "السوق في مرحلة تذبذب عرضي، يُفضل الانتظار."
 
         bot.send_message(call.message.chat.id, 
@@ -203,10 +213,9 @@ def callback(call):
             f"📍 السعر اللحظي للذهب: `{price} $`\n"
             f"📉 التغير اليومي: `{change_from_open}%`\n"
             f"⚖️ **مزاج السوق العام:** `{mood_status}`\n"
-            f"⚡ **مؤشر قوة الحركة:** `63% (نشط جداً)`\n"
             f"🏦 **تحليل صانع السوق (Smart Money):**\n"
-            f"   • تمركز السيولة: `مناطق تجميع وكسر هيكلي (BOS)`\n"
-            f"   • نطاق الطلب والعرض: `{zone_entree}`\n\n"
+            f"   • الاتجاه المسيطر: `{signal_type}`\n"
+            f"   • نطاق التفعيل: `{zone_entree}`\n\n"
             f"💡 **القرار الفني الخارق:** `{advice}`\n"
             f"━━━━━━━━━━━━━━━━━━━━━", 
             parse_mode="Markdown")
@@ -227,7 +236,8 @@ def callback(call):
         bot.send_message(call.message.chat.id, 
             f"🎯 **استراتيجية صفقات زيرو انعكاس:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 سعر الدخول المقترح: `{zone_entree}`\n"
+            f"📌 نوع الإشارة: `{signal_type}`\n"
+            f"📍 نطاق الدخول: `{zone_entree}`\n"
             f"⛔ وقف الخسارة الآمن: `{stop_loss}`\n"
             f"🎯 الأهداف: `TP1: {tp1} | TP2: {tp2} | TP3: {tp3}`\n"
             f"📊 دقة النموذج: `97.1%`", 
@@ -237,6 +247,7 @@ def callback(call):
         bot.send_message(call.message.chat.id, 
             f"⚡ **إشارة تداول مؤسسية (VIP):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📌 الاتجاه: `{signal_type}`\n"
             f"📍 نقطة التفعيل: `{zone_entree}`\n"
             f"⛔ وقف الخسارة: `{stop_loss}`\n"
             f"🎯 المستهدفات: `{tp1} / {tp2} / {tp3}`", 
