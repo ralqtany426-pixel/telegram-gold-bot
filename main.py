@@ -48,8 +48,7 @@ def background_market_monitor():
                         f"⚡ تفقد المنصة وادخل الصفقة الآن!",
                         parse_mode="Markdown"
                     )
-                    # التوقف لمدة ساعة بعد إرسال التنبيه لكي لا يتكرر الإزعاج باستمرار
-                    time.sleep(3600) 
+                    time.sleep(3600) # التوقف لمدة ساعة بعد الإرسال
             time.sleep(60) # فحص السوق كل دقيقة
         except:
             time.sleep(60)
@@ -59,10 +58,12 @@ threading.Thread(target=background_market_monitor, daemon=True).start()
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
-    bot.process_new_updates([telebot.types.Update.de_json(request.get_data().decode('utf-8'))])
+    json_str = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
     return "!", 200
 
-@app.message_handler(commands=['start'])
+@bot.message_handler(commands=['start'])
 def start_command(message):
     global USER_CHAT_ID
     USER_CHAT_ID = message.chat.id # حفظ رقمك تلقائياً فور إرسال /start
@@ -76,7 +77,7 @@ def start_command(message):
     )
     bot.send_message(message.chat.id, "🤖 **بوت تحليل الذهب المحترف (Spirex Style + تنبيهات تلقائية)**\nاختر أحد الأزرار للتحليل:", parse_mode="Markdown", reply_markup=markup)
 
-@app.callback_query_handler(func=lambda call: True)
+@bot.callback_query_handler(func=lambda call: True)
 def callback(call):
     global USER_CHAT_ID
     USER_CHAT_ID = call.message.chat.id
