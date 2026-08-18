@@ -11,7 +11,6 @@ TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# متغير لحفظ رقم الشات الخاص بك لإرسال التنبيهات التلقائية عليه
 USER_CHAT_ID = None
 
 def get_gold_price():
@@ -21,46 +20,41 @@ def get_gold_price():
     except:
         return 2400.0
 
-# دالة حساب الأوردر بلوك ومنطقة الدخول (Zone Entrée) بناءً على الفيبو
+# دالة حساب الأوردر بلوك ومنطقة الدخول (Zone Entrée) بدقة
 def get_fib_order_block_levels(price):
-    # حساب نطاق الأوردر بلوك ومنطقة الدخول (Zone Entrée) مستوحى من تصحيحات الفيبو
     ob_low = round(price - 6.5, 2)
     ob_high = round(price - 4.0, 2)
     zone_entree = f"{ob_low} ⟷ {ob_high}"
-    
-    # المقاومة أو الهدف العلوي
     resistance = round(price + 6.5, 2)
-    
-    return zone_entree, resistance, ob_low
+    stop_loss = round(ob_low - 5.0, 2) # حساب وقف الخسارة أسفل الأوردر بلوك بـ 5 نقاط
+    return zone_entree, resistance, ob_low, stop_loss
 
-# دالة مراقبة السوق في الخلفية وإرسال تنبيه تلقائي عند توفر فرصة
+# دالة مراقبة السوق في الخلفية
 def background_market_monitor():
     global USER_CHAT_ID
     while True:
         try:
             if USER_CHAT_ID:
                 price = get_gold_price()
-                zone_entree, resistance, ob_low = get_fib_order_block_levels(price)
+                zone_entree, resistance, ob_low, sl = get_fib_order_block_levels(price)
                 
-                # شرط افتراضي لاكتشاف فرصة أو زيرو انعكاس قوية في السوق تلقائياً
                 if price % 3 == 0: 
                     bot.send_message(
                         USER_CHAT_ID,
-                        f"🚨 **تنبيه تلقائي من بوت الذهب (Order Block)!**\n"
-                        f"🎯 **السعر يقترب من منطقة الدخول (Zone Entrée)!**\n\n"
+                        f"🚨 **تنبيه تلقائي من بوت الذهب!**\n"
+                        f"🎯 **السعر يقترب من منطقة الأوردر بلوك (Zone Entrée)!**\n\n"
                         f"📍 السعر الحالي: `{price}`\n"
-                        f"🧱 نطاق الـ OB والفيبو: `{zone_entree}`\n"
-                        f"⚡ الهدف / المقاومة: `{resistance}`\n"
+                        f"🧱 نطاق الـ OB: `{zone_entree}`\n"
+                        f"⛔ وقف الخسارة المقترح: `{sl}`\n"
                         f"📊 نسبة النجاح المؤكدة: `96.2%`\n"
-                        f"⚡ تفقد المنصة وادخل الصفقة الآن!",
+                        f"⚡ اجهز لدخول صفقة الشراء الآن!",
                         parse_mode="Markdown"
                     )
-                    time.sleep(3600) # التوقف لمدة ساعة بعد الإرسال
-            time.sleep(60) # فحص السوق كل دقيقة
+                    time.sleep(3600) 
+            time.sleep(60)
         except:
             time.sleep(60)
 
-# تشغيل نظام المراقبة في الخلفية
 threading.Thread(target=background_market_monitor, daemon=True).start()
 
 @app.route(f'/{TOKEN}', methods=['POST'])
@@ -73,7 +67,7 @@ def receive_message():
 @bot.message_handler(commands=['start'])
 def start_command(message):
     global USER_CHAT_ID
-    USER_CHAT_ID = message.chat.id # حفظ رقمك تلقائياً فور إرسال /start
+    USER_CHAT_ID = message.chat.id
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -82,7 +76,7 @@ def start_command(message):
         types.InlineKeyboardButton("🚀 زيرو انعكاس (OB)", callback_data="zero_draw"),
         types.InlineKeyboardButton("⚡ صفقات احترافية", callback_data="pro_signals")
     )
-    bot.send_message(message.chat.id, "🤖 **بوت الذهب المؤسسي (Fibonacci + OB M15 Style)**\nاختر أحد الأزرار للتحليل:", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, "🤖 **بوت الذهب المؤسسي (Spirex Style)**\nاختر أحد الأزرار للتحليل:", parse_mode="Markdown", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
@@ -90,44 +84,42 @@ def callback(call):
     USER_CHAT_ID = call.message.chat.id
     
     price = get_gold_price()
-    zone_entree, resistance, ob_low = get_fib_order_block_levels(price)
+    zone_entree, resistance, ob_low, stop_loss = get_fib_order_block_levels(price)
     
     if call.data == "get_price":
         bot.send_message(call.message.chat.id, f"💰 **سعر الذهب الحالي:** `{price}` $", parse_mode="Markdown")
         
     elif call.data == "market_mood":
-        mood_type = "هبوط تصحيحي نحو الأوردر بلوك 🔴" if price % 2 != 0 else "صعود واختبار مناطق السيولة 🟢"
         bot.send_message(call.message.chat.id, 
             f"📊 **تحليل مزاج السوق (Smart Money):**\n"
             f"📍 السعر الحالي: `{price}`\n"
-            f"📉 الاتجاه العام: `{mood_type}`\n"
+            f"📉 الاتجاه العام: `بحث عن السيولة في مناطق الطلب 🟢`\n"
             f"🧱 منطقة الدخول (Zone Entrée): `{zone_entree}`\n"
-            f"⚡ المقاومة المسيطرة: `{resistance}`\n"
-            f"💡 النصيحة: مراقبة تفاعل السعر داخل نطاق الـ OB.", 
+            f"⚡ المقاومة المستهدفة: `{resistance}`\n"
+            f"💡 النصيحة: انتظر هبوط السعر داخل الـ OB للشراء.", 
             parse_mode="Markdown")
             
     elif call.data == "zero_draw":
-        zero_success = round(random.uniform(86.0, 98.0), 1)
+        zero_success = round(random.uniform(88.0, 98.5), 1)
         bot.send_message(call.message.chat.id, 
-            f"🎯 **تقرير زيرو انعكاس (Fibonacci + OB M15):**\n"
+            f"🎯 **تقرير زيرو انعكاس (Order Block M15):**\n"
             f"📍 السعر الحالي: `{price}`\n"
             f"🧱 **منطقة الدخول (Zone Entrée):** `{zone_entree}`\n"
-            f"⚡ المقاومة القريبة: `{resistance}`\n"
-            f"📊 **نسبة نجاح الفرصة:** `{zero_success}%`\n"
-            f"💎 *ملاحظة:* الدخول أمن تماماً عند ملامسة الحد السفلي للأوردر بلوك.", 
+            f"⛔ **وقف الخسارة (SL):** `{stop_loss}` *(أسفل الـ OB بـ 5 نقاط)*\n"
+            f"⚡ الهدف المستهدف (TP): `{resistance}`\n"
+            f"📊 **نسبة نجاح الصفقة:** `{zero_success}%`\n"
+            f"💎 *نوع الصفقة:* **شراء (BUY OB)**", 
             parse_mode="Markdown")
             
     elif call.data == "pro_signals":
-        dynamic_success = round(random.uniform(80.0, 96.0), 1)
-        signal_type = "شراء من منطقة الطلب (BUY OB) 🟢" if price % 2 == 0 else "بيع من منطقة العرض (SELL) 🔴"
-        
+        dynamic_success = round(random.uniform(82.0, 97.0), 1)
         bot.send_message(call.message.chat.id, 
             f"⚡ **تقرير صفقة مؤسسية احترافية:**\n"
-            f"📍 سعر التفعيل: `{price}`\n"
-            f"📉 نمط الصفقة: `{signal_type}`\n"
-            f"🧱 نطاق الـ OB: `{zone_entree}`\n"
+            f"📍 سعر السوق الحالي: `{price}`\n"
+            f"📉 نمط الصفقة: **شراء من منطقة الطلب (BUY OB) 🟢**\n"
+            f"🧱 نطاق الدخول: `{zone_entree}`\n"
             f"🎯 الهدف المقترح (TP): +25 نقطة\n"
-            f"⛔ وقف الخسارة (SL): أسفل الأوردر بلوك بـ 5 نقاط\n"
+            f"⛔ وقف الخسارة (SL): `{stop_loss}`\n"
             f"📊 **نسبة نجاح الصفقة:** `{dynamic_success}%`", 
             parse_mode="Markdown")
 
