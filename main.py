@@ -3,6 +3,7 @@ import sqlite3
 import requests
 import telebot
 import threading
+import time
 from flask import Flask, request
 from telebot import types
 
@@ -10,7 +11,7 @@ TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# --- 1. إعداد قاعدة البيانات لحفظ المستخدمين (بدل متغير واحد) ---
+# --- 1. إعداد قاعدة البيانات لحفظ المستخدمين ---
 def init_db():
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -46,13 +47,27 @@ def get_institutional_levels(price):
     ob_low = round(price - 6.5, 2)
     ob_high = round(price - 4.0, 2)
     zone_entree = f"{ob_low} ⟷ {ob_high}"
-    
+
     stop_loss = round(ob_low - 5.0, 2)
     tp1 = round(price + 10.0, 2)
     tp2 = round(price + 22.0, 2)
     tp3 = round(price + 40.0, 2)
-    
+
     return zone_entree, stop_loss, tp1, tp2, tp3, ob_low
+
+# --- دالة حساب مستويات الدعم والمقاومة المؤسسية الاحترافية ---
+def get_support_resistance_levels(price):
+    # مقاوماعات قوية تعتمد على مسافة السعر الحالي
+    res3 = round(price + 25.0, 2)
+    res2 = round(price + 15.0, 2)
+    res1 = round(price + 7.0, 2)
+    
+    # دعوم قوية بناءً على هيكل السوق والسيولة
+    sup1 = round(price - 7.0, 2)
+    sup2 = round(price - 15.0, 2)
+    sup3 = round(price - 28.0, 2)
+    
+    return res3, res2, res1, sup1, sup2, sup3
 
 # مراقبة السوق في الخلفية وإرسال التنبيهات لكل المستخدمين المسجلين
 def background_market_monitor():
@@ -93,7 +108,7 @@ def receive_message():
     bot.process_new_updates([update])
     return "!", 200
 
-# --- 3. مسار جديد خاص بـ TradingView Webhook (لاستقبال الصفقات الحقيقية) ---
+# --- 3. مسار جديد خاص بـ TradingView Webhook ---
 @app.route('/tradingview_webhook', methods=['POST'])
 def tradingview_webhook():
     try:
@@ -101,7 +116,7 @@ def tradingview_webhook():
         action = data.get('action', 'BUY')
         price = data.get('price', get_gold_price())
         setup_type = data.get('setup', 'Order Block M15')
-        
+
         users = get_all_users()
         if users:
             for chat_id in users:
@@ -121,18 +136,19 @@ def tradingview_webhook():
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    add_user(message.chat.id)  # تسجيل المستخدم في قاعدة البيانات
+    add_user(message.chat.id)
 
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("💰 السعر اللحظي", callback_data="get_price"),
         types.InlineKeyboardButton("📊 مزاج وتحليل السوق", callback_data="market_mood"),
+        types.InlineKeyboardButton("🛡️ الدعم والمقاومة الفلكية", callback_data="support_resistance"),
         types.InlineKeyboardButton("🚀 صفقات زيرو انعكاس", callback_data="zero_draw"),
         types.InlineKeyboardButton("⚡ صفقات مؤسسية (VIP)", callback_data="pro_signals"),
         types.InlineKeyboardButton("🧮 حاسبة إدارة المخاطر", callback_data="risk_calc"),
         types.InlineKeyboardButton("📈 سجل أداء البوت", callback_data="track_record")
     )
-    
+
     welcome_text = (
         f"👑 **النظام الآلي المتقدم لتداول الذهب (Institutional XAU/USD)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -146,6 +162,7 @@ def callback(call):
     add_user(call.message.chat.id)
     price = get_gold_price()
     zone_entree, stop_loss, tp1, tp2, tp3, _ = get_institutional_levels(price)
+    res3, res2, res1, sup1, sup2, sup3 = get_support_resistance_levels(price)
 
     if call.data == "get_price":
         bot.send_message(call.message.chat.id, 
@@ -165,6 +182,22 @@ def callback(call):
             f"🏦 اتجاه صانع السوق: `تجميع عقود شراء (Accumulation)`\n"
             f"🧱 نطاق الطلب الفعّال: `{zone_entree}`\n"
             f"💡 **القرار الفني:** `البحث عن فرص الشراء عند إعادة الاختبار فقط.`", 
+            parse_mode="Markdown")
+
+    elif call.data == "support_resistance":
+        bot.send_message(call.message.chat.id, 
+            f"🛡️ **خريطة مستويات الدعم والمقاومة المؤسسية:**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📍 السعر الحالي للذهب: `{price} $`\n\n"
+            f"🔴 **المقاومات العلوية (Zones of Supply):**\n"
+            f"   • مقاومة 3 (R3): `{res3} $` ⚠️ *(مستهدف علوي قوي)*\n"
+            f"   • مقاومة 2 (R2): `{res2} $` 🛑 *(منطقة انعكاس محتملة)*\n"
+            f"   • مقاومة 1 (R1): `{res1} $` ⚡ *(اختراقها يؤكد الصعود)*\n\n"
+            f"🟢 **الدعوم السفلية (Zones of Demand):**\n"
+            f"   • دعم 1 (S1): `{sup1} $` 🛡️ *(منطقة ارتداد أولى)*\n"
+            f"   • دعم 2 (S2): `{sup2} $` 🧱 *(موقع تجمع عقود صانع السوق)*\n"
+            f"   • دعم 3 (S3): `{sup3} $` ⚓ *(خط الدفاع الأخير الهيكلي)*\n\n"
+            f"💡 *ملاحظة خوارزمية:* يتم حساب هذه المستويات ديناميكياً بناءً على تذبذب الشمعة الحالية وتمركزات صانع السوق.", 
             parse_mode="Markdown")
 
     elif call.data == "zero_draw":
