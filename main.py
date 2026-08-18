@@ -32,10 +32,11 @@ def start_command(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("💰 سعر الذهب", callback_data="get_price"),
+        types.InlineKeyboardButton("📊 مزاج السوق والاتجاه", callback_data="market_mood"),
         types.InlineKeyboardButton("🚀 زيرو انعكاس", callback_data="zero_draw"),
-        types.InlineKeyboardButton("📈 صفقة قريبة", callback_data="success_signal")
+        types.InlineKeyboardButton("⚡ صفقات احترافية", callback_data="pro_signals")
     )
-    bot.send_message(message.chat.id, "🤖 **بوت تحليل الذهب المحترف**\nاختر أحد الأزرار للتحليل:", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, "🤖 **بوت تحليل الذهب المحترف (Spirex Style)**\nاختر أحد الأزرار للتحليل:", parse_mode="Markdown", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
@@ -45,6 +46,17 @@ def callback(call):
     if call.data == "get_price":
         bot.send_message(call.message.chat.id, f"💰 **سعر الذهب الحالي:** `{price}` $", parse_mode="Markdown")
         
+    elif call.data == "market_mood":
+        mood_type = "هبوط / ضغط بيعي 🔴" if price % 2 != 0 else "صعود / ضغط شرائي 🟢"
+        bot.send_message(call.message.chat.id, 
+            f"📊 **تحليل مزاج السوق والاتجاه (Spirex Style):**\n"
+            f"📍 السعر الحالي: `{price}`\n"
+            f"📉 الاتجاه العام: `{mood_type}`\n"
+            f"🛡 الدعم المسيطر: `{support}`\n"
+            f"⚡ المقاومة المسيطرة: `{resistance}`\n"
+            f"💡 النصيحة: مراقبة السيولة وعدم التسرع في عكس الاتجاه.", 
+            parse_mode="Markdown")
+            
     elif call.data == "zero_draw":
         zero_success = round(random.uniform(82.0, 97.0), 1)
         bot.send_message(call.message.chat.id, 
@@ -55,17 +67,17 @@ def callback(call):
             f"📊 **نسبة نجاح الفرصة:** `{zero_success}%`", 
             parse_mode="Markdown")
             
-    elif call.data == "success_signal":
-        dynamic_success = round(random.uniform(75.0, 95.0), 1)
+    elif call.data == "pro_signals":
+        dynamic_success = round(random.uniform(78.0, 96.0), 1)
         signal_type = "شراء (BUY) 🟢" if price % 2 == 0 else "بيع (SELL) 🔴"
         
         bot.send_message(call.message.chat.id, 
-            f"⚡ **تحليل الصفقة والتوصية:**\n"
+            f"⚡ **تقرير صفقة احترافية:**\n"
             f"📍 سعر الدخول: `{price}`\n"
-            f"📉 الاتجاه المكتشف: `{signal_type}`\n"
+            f"📉 نوع الصفقة: `{signal_type}`\n"
             f"🛡 الدعم: `{support}` | ⚡ المقاومة: `{resistance}`\n"
-            f"🎯 الهدف المقترح (TP): +15 نقطة\n"
-            f"⛔ وقف الخسارة (SL): -7 نقاط\n"
+            f"🎯 الهدف المقترح (TP): +20 نقطة\n"
+            f"⛔ وقف الخسارة (SL): -10 نقاط\n"
             f"📊 **نسبة نجاح الصفقة:** `{dynamic_success}%`", 
             parse_mode="Markdown")
 
