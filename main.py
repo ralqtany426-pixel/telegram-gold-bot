@@ -13,7 +13,7 @@ app = Flask(__name__)
 
 open_daily_price = 4370.0 
 
-# --- متغيرات لتثبيت حالة الصفقة ومنع التغيير العشوائي (مع إضافة فريم 30 دقيقة) ---
+# --- متغيرات لتثبيت حالة الصفقة ومنع التغيير العشوائي (مع إضافة مراقبة السيطرة) ---
 locked_signal_data = {
     "is_locked": False,
     "signal_type": None,
@@ -27,7 +27,8 @@ locked_signal_data = {
     "tf_30m": None,
     "tf_1h": None,
     "tf_4h": None,
-    "tf_daily": None
+    "tf_daily": None,
+    "last_alert_sent": False
 }
 
 # --- 1. إعداد وتحديث قاعدة البيانات ---
@@ -91,12 +92,29 @@ def get_gold_price():
 def get_last_15m_close_price(current_price):
     return current_price
 
+# --- دالة كاشف سيطرة السوق (تنبيه مبكر قبل الانعكاس) ---
+def check_market_dominance(current_price, signal_type, stop_loss):
+    global locked_signal_data
+    if not locked_signal_data["is_locked"] or locked_signal_data["last_alert_sent"]:
+        return None
+
+    distance_to_sl = abs(current_price - stop_loss)
+    
+    # إذا اقترب السعر من وقف الخسارة (بأقل من 2.5 دولار)، نعتبر أن الطرف الآخر يسيطر بقوة
+    if distance_to_sl <= 2.5:
+        locked_signal_data["last_alert_sent"] = True
+        if "بيع" in signal_type:
+            return "⚠️ **تنبيه سيطرة مبكر:** المشترون يضغطون بقوة نحو منطقة وقف الخسارة لصفقة البيع! استعد لتأمين صفقتك."
+        else:
+            return "⚠️ **تنبيه سيطرة مبكر:** البائعون يضغطون بقوة نحو منطقة وقف الخسارة لصفقة الشراء! استعد لتأمين صفقتك."
+    return None
+
 def get_institutional_levels(price):
     global locked_signal_data
 
     current_close_15m = get_last_15m_close_price(price)
 
-    # إذا كانت الصفقة مثبتة مسبقاً، نتحقق هل أغلق السعر خارج وقف الخسارة؟
+    # التحقق هل أغلق السعر خارج وقف الخسارة؟
     if locked_signal_data["is_locked"]:
         sl = locked_signal_data["stop_loss"]
         sig = locked_signal_data["signal_type"]
@@ -124,6 +142,7 @@ def get_institutional_levels(price):
             )
         else:
             locked_signal_data["is_locked"] = False
+            locked_signal_data["last_alert_sent"] = False
 
     # --- حساب مستويات جديدة وتثبيتها ---
     change_from_open = price - open_daily_price
@@ -176,7 +195,8 @@ def get_institutional_levels(price):
         "tf_30m": tf_30m,
         "tf_1h": tf_1h,
         "tf_4h": tf_4h,
-        "tf_daily": tf_daily
+        "tf_daily": tf_daily,
+        "last_alert_sent": False
     }
 
     return zone_entree, stop_loss, tp1, tp2, tp3, signal_type, calculated_probability, tf_15m, tf_30m, tf_1h, tf_4h, tf_daily
@@ -185,27 +205,7 @@ def get_support_resistance_levels(price):
     return round(price + 25.0, 2), round(price + 15.0, 2), round(price + 7.0, 2), \
            round(price - 7.0, 2), round(price - 15.0, 2), round(price - 28.0, 2)
 
-# --- دالة التحذير الخارق التلقائي ---
-def send_ultimate_alert(chat_id, price, signal_type, zone_entree, stop_loss, tp1, probability):
-    alert_message = (
-        f"🚨🔥 **[ تـنبـيـه الـسـوق الـخــــارق (مثبت) ]** 🔥🚨\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚡ **فرصة ذهبية مؤكدة - High Probability!**\n"
-        f"📍 السعر الحالي: `{price} $`\n"
-        f"📌 الاتجاه: `{signal_type}`\n"
-        f"🎯 نسبة نجاح الصفقة: `{probability}%` 🌟\n"
-        f"🎯 منطقة التفعيل: `{zone_entree}`\n"
-        f"⛔ وقف الخسارة: `{stop_loss} $`\n"
-        f"🎯 الهدف الأساسي (TP1): `{tp1} $`\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ *ملاحظة: منطقة مثبتة لحين إغلاق الشمعة خارج وقف الخسارة.*"
-    )
-    try:
-        bot.send_message(chat_id, alert_message, parse_mode="Markdown")
-    except:
-        pass
-
-# --- مراقبة السوق الخلفية ---
+# --- مراقبة السوق الخلفية (مع التنبيه المبكر للسيطرة) ---
 def background_market_monitor():
     while True:
         try:
@@ -213,10 +213,15 @@ def background_market_monitor():
             if users:
                 price = get_gold_price()
                 zone_entree, stop_loss, tp1, _, _, signal_type, prob, _, _, _, _, _ = get_institutional_levels(price)
-                if 4360.0 <= price <= 4375.0:
+                
+                # فحص السيطرة وإرسال تنبيه مبكر إن اقترب السعر من الوقف
+                warning_msg = check_market_dominance(price, signal_type, stop_loss)
+                if warning_msg:
                     for chat_id in users:
-                        send_ultimate_alert(chat_id, price, signal_type, zone_entree, stop_loss, tp1, prob)
-                    time.sleep(1800) 
+                        try:
+                            bot.send_message(chat_id, warning_msg, parse_mode="Markdown")
+                        except:
+                            pass
             time.sleep(60)
         except:
             time.sleep(60)
@@ -245,7 +250,7 @@ def start_command(message):
         types.InlineKeyboardButton("🧮 حاسبة إدارة المخاطر", callback_data="risk_calc"),
         types.InlineKeyboardButton("📈 سجل أداء البوت", callback_data="track_record")
     )
-    bot.send_message(message.chat.id, "👑 **النظام الذكي المتطور لتداول الذهب (مع فريم 30 دقيقة وتثبيت المنطقة)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 **النظام الذكي المتطور لتداول الذهب (مع التنبيه المبكر للسيادة)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
 
 # --- معالجة الأزرار التفاعلية ---
 @bot.callback_query_handler(func=lambda call: True)
@@ -337,7 +342,7 @@ def callback(call):
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"✅ نسبة نجاح الصفقات: `89%`\n"
             f"📊 إجمالي النقاط هذا الأسبوع: `+360 نقطة`\n"
-            f"وضع النظام: مستقر ومحدث بفريم 30 دقيقة."
+            f"وضع النظام: مستقر ومحدث بفريم 30 دقيقة مع الإنذار المبكر."
         )
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
