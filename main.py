@@ -21,8 +21,6 @@ active_signals = {
     "tp2": None,
     "tp3": None,
     "probability": None,
-    "market_mood_text": None,
-    "market_mood_percent": None,
     "tf_15m": None,
     "tf_30m": None,
     "tf_1h": None,
@@ -88,7 +86,7 @@ def get_gold_price():
     except:
         return 4456.0
 
-# --- المحلل الديناميكي المحدث مع نظام "مزاج السوق" (Spirex Style) ---
+# --- المحلل الديناميكي المحدث (يعمل على كل الفريمات وباتجايلن بيع/شراء) ---
 def get_dynamic_institutional_levels(price):
     global active_signals
 
@@ -112,24 +110,22 @@ def get_dynamic_institutional_levels(price):
                 active_signals["tp3"],
                 active_signals["signal_type"],
                 active_signals["probability"],
-                active_signals["market_mood_text"],
-                active_signals["market_mood_percent"],
                 active_signals["tf_15m"],
                 active_signals["tf_30m"],
                 active_signals["tf_1h"],
                 active_signals["tf_4h"]
             )
         else:
+            # إعادة ضبط عند كسر الوقف لتوليد فرصة جديدة فوراً
             active_signals["is_locked"] = False
             active_signals["last_alert_sent"] = False
 
-    # --- نظام مزاج السوق الديناميكي (Spirex Style) ---
+    # --- النظام الديناميكي الجديد: يعتمد على نطاقات التذبذب الحية لاكتشاف العرض والطلب ---
     remainder = price % 20
     
     if remainder > 10:
+        # منطقة عرض مؤسسية (تنبيه هبوط / بيع - مثل القمم والتجميع العُلوي)
         signal_type = "📉 بيع (SELL) - منطقة عرض وتجميع علوي"
-        market_mood_text = "هابط 📉"
-        market_mood_percent = 62
         ob_low = round(price - 1.5, 2)
         ob_high = round(price + 3.5, 2)
         zone_entree = f"{ob_low} ⟷ {ob_high}"
@@ -144,9 +140,8 @@ def get_dynamic_institutional_levels(price):
         tf_1h = "رفض سعري من منطقة السيولة (Bearish OB)"
         tf_4h = "ارتداد هيكلي هابط من القمة"
     else:
+        # منطقة طلب مؤسسية (تنبيه صعود / شراء - مثل القيعان والتجميع السُفلي)
         signal_type = "📈 شراء (BUY) - منطقة طلب وتجميع سُفلي"
-        market_mood_text = "صاعد 📈"
-        market_mood_percent = 61
         ob_low = round(price - 3.5, 2)
         ob_high = round(price + 1.5, 2)
         zone_entree = f"{ob_low} ⟷ {ob_high}"
@@ -161,7 +156,7 @@ def get_dynamic_institutional_levels(price):
         tf_1h = "اختراق ناجح لفوليوم السيولة (Bullish OB)"
         tf_4h = "تمركز سيولة شرائية من القاع"
 
-    # تثبيت الصفقة الجديدة مع تفاصيل مزاج السوق
+    # تثبيت الصفقة الجديدة
     active_signals = {
         "is_locked": True,
         "signal_type": signal_type,
@@ -171,8 +166,6 @@ def get_dynamic_institutional_levels(price):
         "tp2": tp2,
         "tp3": tp3,
         "probability": probability,
-        "market_mood_text": market_mood_text,
-        "market_mood_percent": market_mood_percent,
         "tf_15m": tf_15m,
         "tf_30m": tf_30m,
         "tf_1h": tf_1h,
@@ -180,7 +173,7 @@ def get_dynamic_institutional_levels(price):
         "last_alert_sent": False
     }
 
-    return zone_entree, stop_loss, tp1, tp2, tp3, signal_type, probability, market_mood_text, market_mood_percent, tf_15m, tf_30m, tf_1h, tf_4h
+    return zone_entree, stop_loss, tp1, tp2, tp3, signal_type, probability, tf_15m, tf_30m, tf_1h, tf_4h
 
 def get_support_resistance_levels(price):
     return round(price + 25.0, 2), round(price + 15.0, 2), round(price + 7.0, 2), \
@@ -193,13 +186,13 @@ def background_market_monitor():
             users = get_alert_users()
             if users:
                 price = get_gold_price()
-                zone_entree, stop_loss, tp1, tp2, tp3, signal_type, prob, mood_txt, mood_pct, tf_15m, tf_30m, tf_1h, tf_4h = get_dynamic_institutional_levels(price)
+                zone_entree, stop_loss, tp1, tp2, tp3, signal_type, prob, tf_15m, tf_30m, tf_1h, tf_4h = get_dynamic_institutional_levels(price)
                 
-                # إرسال الصفقة تلقائياً للمشتركين فور رصدها
+                # إرسال الصفقة تلقائياً للمشتركين فور رصدها عبر الفريمات
                 if active_signals["is_locked"] and not active_signals["last_alert_sent"]:
                     active_signals["last_alert_sent"] = True
                     signal_msg = (
-                        f"🤖⚡ **[ تنبيه Spirex الذكي - مزاج السوق: {mood_pct}% {mood_txt} ]** ⚡🤖\n"
+                        f"🚨🎯 **[ إشارة ذكية جديدة - كافة الفريمات ]** 🎯🚨\n"
                         f"━━━━━━━━━━━━━━━━━━━━━\n"
                         f"📌 الاتجاه: `{signal_type}`\n"
                         f"📍 السعر الحالي: `{price} $`\n"
@@ -240,19 +233,19 @@ def start_command(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("💰 السعر اللحظي", callback_data="get_price"),
-        types.InlineKeyboardButton("📊 مزاج السوق (Spirex Style)", callback_data="market_mood"),
+        types.InlineKeyboardButton("📊 تحليل الفريمات المتعددة", callback_data="market_mood"),
         types.InlineKeyboardButton("🛡️ الدعم والمقاومة", callback_data="support_resistance"),
         types.InlineKeyboardButton("🚀 صفقات العرض والطلب (VIP)", callback_data="pro_signals"),
         types.InlineKeyboardButton("🔔 تفعيل/إيقاف التنبيهات", callback_data="toggle_alerts"),
         types.InlineKeyboardButton("🧮 حاسبة إدارة المخاطر", callback_data="risk_calc"),
         types.InlineKeyboardButton("📈 سجل الأداء", callback_data="track_record")
     )
-    bot.send_message(message.chat.id, "👑 **النظام الذكي المتطور (بنظام Spirex لمزاج السوق والفريمات)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 **النظام الذكي المطور لتداول الذهب (شامل كافة الفريمات ومناطق التجميع)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
     price = get_gold_price()
-    zone_entree, stop_loss, tp1, tp2, tp3, signal_type, probability, mood_txt, mood_pct, tf_15m, tf_30m, tf_1h, tf_4h = get_dynamic_institutional_levels(price)
+    zone_entree, stop_loss, tp1, tp2, tp3, signal_type, probability, tf_15m, tf_30m, tf_1h, tf_4h = get_dynamic_institutional_levels(price)
     r3, r2, r1, s1, s2, s3 = get_support_resistance_levels(price)
 
     if call.data == "get_price":
@@ -261,12 +254,11 @@ def callback(call):
 
     elif call.data == "market_mood":
         msg = (
-            f"📊 **مؤشر مزاج السوق (Spirex Style):**\n"
+            f"📊 **تحليل الفريمات المتعددة ومناطق التجميع:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📍 السعر الحالي: `{price} $`\n"
-            f"🟢 **حالة السوق العامة: `{mood_pct}% {mood_txt}`**\n"
             f"📌 الاتجاه المسيطر: `{signal_type}`\n"
-            f"🌟 ثقة التحليل: `{probability}%`\n\n"
+            f"🌟 الثقة: `{probability}%`\n\n"
             f"⏱️ **التوافق الزمني:**\n"
             f"• 15د: `{tf_15m}`\n"
             f"• 30د: `{tf_30m}`\n"
@@ -293,11 +285,11 @@ def callback(call):
 
     elif call.data == "pro_signals" or call.data == "zero_draw":
         msg = (
-            f"🚀 **الصفقة الحية المرصودة (مزاج السوق: {mood_pct}% {mood_txt}):**\n"
+            f"🚀 **الصفقة الحية المرصودة (لكافة الفريمات):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📌 الاتجاه: `{signal_type}`\n"
             f"📍 السعر الحالي: `{price} $`\n"
-            f"🌟 الثقة: `{probability}%`\n"
+            f"🌟 النسبة: `{probability}%`\n"
             f"🎯 منطقة التفعيل: `{zone_entree}`\n"
             f"⛔ وقف الخسارة: `{stop_loss} $`\n"
             f"🎯 الأهداف: `{tp1} / {tp2} / {tp3} $`"
@@ -317,7 +309,7 @@ def callback(call):
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
 
     elif call.data == "track_record":
-        msg = f"📈 **سجل الأداء:**\nنسبة النجاح العامة: `90%`\nوضع النظام: رصد حي ومباشر مع مؤشر مزاج السوق."
+        msg = f"📈 **سجل الأداء:**\nنسبة النجاح العامة: `90%`\nوضع النظام: رصد حي ومباشر لكافة الفريمات."
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
 
