@@ -95,14 +95,13 @@ def get_last_15m_close_price(current_price):
 # --- دالة كاشف سيطرة السوق (تنبيه مبكر قبل الانعكاس) ---
 def check_market_dominance(current_price, signal_type, stop_loss):
     global locked_signal_data
-    if not locked_signal_data["is_locked"] or locked_signal_data["last_alert_sent"]:
+    if not locked_signal_data["is_locked"]:
         return None
 
     distance_to_sl = abs(current_price - stop_loss)
     
-    # إذا اقترب السعر من وقف الخسارة (بأقل من 2.5 دولار)، نعتبر أن الطرف الآخر يسيطر بقوة
+    # إذا اقترب السعر من وقف الخسارة (بأقل من 2.5 دولار)
     if distance_to_sl <= 2.5:
-        locked_signal_data["last_alert_sent"] = True
         if "بيع" in signal_type:
             return "⚠️ **تنبيه سيطرة مبكر:** المشترون يضغطون بقوة نحو منطقة وقف الخسارة لصفقة البيع! استعد لتأمين صفقتك."
         else:
@@ -141,6 +140,7 @@ def get_institutional_levels(price):
                 locked_signal_data["tf_daily"]
             )
         else:
+            # إذا انكسرتمنطقة الوقف، يتم إلغاء القفل والسماح بتوليد صفقة جديدة كلياً
             locked_signal_data["is_locked"] = False
             locked_signal_data["last_alert_sent"] = False
 
@@ -181,7 +181,7 @@ def get_institutional_levels(price):
         tf_4h = "ارتداد من قاعدة طلب قوية (Bullish OB)"
         tf_daily = "زخم شرائي يدعم استمرار الصعود"
 
-    # قفل وتثبيت البيانات الجديدة
+    # قفل وتثبيت البيانات الجديدة (مع جعل last_alert_sent بقيمة False ليتم إرسالها الآن)
     locked_signal_data = {
         "is_locked": True,
         "signal_type": signal_type,
@@ -205,16 +205,42 @@ def get_support_resistance_levels(price):
     return round(price + 25.0, 2), round(price + 15.0, 2), round(price + 7.0, 2), \
            round(price - 7.0, 2), round(price - 15.0, 2), round(price - 28.0, 2)
 
-# --- مراقبة السوق الخلفية (مع التنبيه المبكر للسيطرة) ---
+# --- مراقبة السوق الخلفية المحدثة لإرسال الصفقات التلقائية ---
 def background_market_monitor():
     while True:
         try:
             users = get_alert_users()
             if users:
                 price = get_gold_price()
-                zone_entree, stop_loss, tp1, _, _, signal_type, prob, _, _, _, _, _ = get_institutional_levels(price)
+                zone_entree, stop_loss, tp1, tp2, tp3, signal_type, prob, tf_15m, tf_30m, tf_1h, tf_4h, tf_daily = get_institutional_levels(price)
                 
-                # فحص السيطرة وإرسال تنبيه مبكر إن اقترب السعر من الوقف
+                # 1. إرسال الصفقة تلقائياً إذا تم تثبيتها ولم يتم إرسال تنبيهها بعد
+                if locked_signal_data["is_locked"] and not locked_signal_data["last_alert_sent"]:
+                    locked_signal_data["last_alert_sent"] = True # قفل لمنع التكرار
+                    signal_msg = (
+                        f"🚨🎯 **[ إشارة صفقة مؤسسية جديدة مؤكدة ]** 🎯🚨\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📌 الاتجاه: `{signal_type}`\n"
+                        f"📍 السعر الحالي: `{price} `\n"
+                        f"🌟 **نسبة نجاح الصفقة: `{prob}%`**\n"
+                        f"🎯 منطقة التفعيل: `{zone_entree}`\n"
+                        f"⛔ وقف الخسارة: `{stop_loss} `\n"
+                        f"🎯 الهدف الأول (TP1): `{tp1} `\n"
+                        f"🎯 الهدف الثاني (TP2): `{tp2} `\n"
+                        f"🎯 الهدف الثالث (TP3): `{tp3} `\n\n"
+                        f"⏱️ **توافق الفريمات:**\n"
+                        f"• 15د: `{tf_15m}`\n"
+                        f"• 30د: `{tf_30m}`\n"
+                        f"• 1س: `{tf_1h}`\n"
+                        f"• 4س: `{tf_4h}`"
+                    )
+                    for chat_id in users:
+                        try:
+                            bot.send_message(chat_id, signal_msg, parse_mode="Markdown")
+                        except:
+                            pass
+
+                # 2. فحص السيطرة وإرسال تنبيه مبكر إن اقترب السعر من الوقف
                 warning_msg = check_market_dominance(price, signal_type, stop_loss)
                 if warning_msg:
                     for chat_id in users:
@@ -250,7 +276,7 @@ def start_command(message):
         types.InlineKeyboardButton("🧮 حاسبة إدارة المخاطر", callback_data="risk_calc"),
         types.InlineKeyboardButton("📈 سجل أداء البوت", callback_data="track_record")
     )
-    bot.send_message(message.chat.id, "👑 **النظام الذكي المتطور لتداول الذهب (مع التنبيه المبكر للسيادة)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 **النظام الذكي المتطور لتداول الذهب (مع الإرسال التلقائي للفرص)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
 
 # --- معالجة الأزرار التفاعلية ---
 @bot.callback_query_handler(func=lambda call: True)
@@ -260,7 +286,7 @@ def callback(call):
     r3, r2, r1, s1, s2, s3 = get_support_resistance_levels(price)
 
     if call.data == "get_price":
-        msg = f"💰 **السعر اللحظي للذهب (XAU/USD):**\n`{price} $`"
+        msg = f"💰 **السعر اللحظي للذهب (XAU/USD):**\n`{price} `"
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
 
@@ -268,7 +294,7 @@ def callback(call):
         msg = (
             f"📊 **تحليل ومزاج السوق عبر الفريمات (منطقة مثبتة):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 السعر الحالي: `{price} $`\n"
+            f"📍 السعر الحالي: `{price} `\n"
             f"📌 الاتجاه المسيطر: `{signal_type}`\n"
             f"🎯 **نسبة نجاح الاتجاه الحالي: `{probability}%`** 🌟\n\n"
             f"⏱️ **التحليل الزمني المتعدد:**\n"
@@ -285,13 +311,13 @@ def callback(call):
         msg = (
             f"🛡️ **مستويات الدعم والمقاومة المؤسسية:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔴 مقاومة 3: `{r3} $`\n"
-            f"🔴 مقاومة 2: `{r2} $`\n"
-            f"🔴 مقاومة 1: `{r1} $`\n"
-            f"--- السعر الحالي: `{price} $` ---\n"
-            f"🟢 دعم 1: `{s1} $`\n"
-            f"🟢 دعم 2: `{s2} $`\n"
-            f"🟢 دعم 3: `{s3} $`"
+            f"🔴 مقاومة 3: `{r3} `\n"
+            f"🔴 مقاومة 2: `{r2} `\n"
+            f"🔴 مقاومة 1: `{r1} `\n"
+            f"--- السعر الحالي: `{price} ` ---\n"
+            f"🟢 دعم 1: `{s1} `\n"
+            f"🟢 دعم 2: `{s2} `\n"
+            f"🟢 دعم 3: `{s3} `"
         )
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
@@ -301,13 +327,13 @@ def callback(call):
             f"🚀 **{('صفقات زيرو انعكاس' if call.data=='zero_draw' else 'صفقات مؤسسية VIP')} (مثبتة)**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📌 الاتجاه: `{signal_type}`\n"
-            f"📍 السعر الحالي: `{price} $`\n"
+            f"📍 السعر الحالي: `{price} `\n"
             f"🌟 **نسبة نجاح الصفقة: `{probability}%`**\n"
             f"🎯 منطقة التفعيل: `{zone_entree}`\n"
-            f"⛔ وقف الخسارة: `{stop_loss} $`\n"
-            f"🎯 الهدف الأول (TP1): `{tp1} $`\n"
-            f"🎯 الهدف الثاني (TP2): `{tp2} $`\n"
-            f"🎯 الهدف الثالث (TP3): `{tp3} $`\n\n"
+            f"⛔ وقف الخسارة: `{stop_loss} `\n"
+            f"🎯 الهدف الأول (TP1): `{tp1} `\n"
+            f"🎯 الهدف الثاني (TP2): `{tp2} `\n"
+            f"🎯 الهدف الثالث (TP3): `{tp3} `\n\n"
             f"⏱️ **توافق الفريمات:**\n"
             f"• 15د: `{tf_15m}`\n"
             f"• 30د: `{tf_30m}`\n"
@@ -331,7 +357,7 @@ def callback(call):
             f"🧮 **حاسبة إدارة المخاطر:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"للحفاظ على حسابك، يرجى عدم المخاطرة بأكثر من `1%` إلى `2%` من إجمالي رأس مالك.\n"
-            f"• وقف الخسارة المقترح للصفقة الحالية: `{stop_loss} $`"
+            f"• وقف الخسارة المقترح للصفقة الحالية: `{stop_loss} `"
         )
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
@@ -342,7 +368,7 @@ def callback(call):
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"✅ نسبة نجاح الصفقات: `89%`\n"
             f"📊 إجمالي النقاط هذا الأسبوع: `+360 نقطة`\n"
-            f"وضع النظام: مستقر ومحدث بفريم 30 دقيقة مع الإنذار المبكر."
+            f"وضع النظام: مستقر ومحدث بفريم 30 دقيقة مع الإرسال التلقائي."
         )
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
