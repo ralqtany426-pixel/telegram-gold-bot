@@ -12,8 +12,7 @@ bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
 # --- 🛠️ ضبط الفارق السعري (Offset) ---
-# إذا لاحظت أن سعر البوت يفرق عن ميتا 5 بمقدار معين، ضع الفارق هنا (مثلاً: 2.5 أو -1.2 أو 0 إذا كان مطابقاً)
-PRICE_OFFSET = 0.0 
+PRICE_OFFSET = -2.4 
 
 # --- متغيرات لتثبيت حالة الصفقة لكل فريم ومنع التكرار العشوائي ---
 active_signals = {
@@ -86,12 +85,12 @@ def get_alert_users():
 def get_gold_price():
     try:
         response = requests.get("https://api.gold-api.com/price/XAU", timeout=5)
-        raw_price = float(response.json().get("price", 4456.0))
-        # تطبيق الفارق لتطابق منصة ميتا 5
+        raw_price = float(response.json().get("price", 0.0))
         adjusted_price = raw_price + PRICE_OFFSET
         return round(adjusted_price, 2)
     except:
-        return round(4456.0 + PRICE_OFFSET, 2)
+        fallback_price = 4485.0 + PRICE_OFFSET
+        return round(fallback_price, 2)
 
 # --- المحلل الديناميكي المحمي بفلتر اتجاه السوق (منع تضارب بيع/شراء) ---
 def get_dynamic_institutional_levels(price):
