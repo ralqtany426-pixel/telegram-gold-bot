@@ -11,6 +11,10 @@ TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
+# --- 🛠️ ضبط الفارق السعري (Offset) ---
+# إذا لاحظت أن سعر البوت يفرق عن ميتا 5 بمقدار معين، ضع الفارق هنا (مثلاً: 2.5 أو -1.2 أو 0 إذا كان مطابقاً)
+PRICE_OFFSET = 0.0 
+
 # --- متغيرات لتثبيت حالة الصفقة لكل فريم ومنع التكرار العشوائي ---
 active_signals = {
     "is_locked": False,
@@ -78,23 +82,25 @@ def get_alert_users():
     conn.close()
     return users
 
-# --- جلب سعر الذهب اللحظي ---
+# --- جلب سعر الذهب اللحظي مع تطبيق الفارق ---
 def get_gold_price():
     try:
         response = requests.get("https://api.gold-api.com/price/XAU", timeout=5)
-        return round(float(response.json().get("price", 4456.0)), 2)
+        raw_price = float(response.json().get("price", 4456.0))
+        # تطبيق الفارق لتطابق منصة ميتا 5
+        adjusted_price = raw_price + PRICE_OFFSET
+        return round(adjusted_price, 2)
     except:
-        return 4456.0
+        return round(4456.0 + PRICE_OFFSET, 2)
 
 # --- المحلل الديناميكي المحمي بفلتر اتجاه السوق (منع تضارب بيع/شراء) ---
 def get_dynamic_institutional_levels(price):
     global active_signals
 
-    # إذا كانت الصفقة مثبتة، نتحقق فقط إن تجاوز السعر وقف الخسارة لإعادة الضبط
     if active_signals["is_locked"]:
         sl = active_signals["stop_loss"]
         sig = active_signals["signal_type"]
-        
+
         is_broken = False
         if "بيع" in sig and price > sl:
             is_broken = True
@@ -116,16 +122,12 @@ def get_dynamic_institutional_levels(price):
                 active_signals["tf_4h"]
             )
         else:
-            # إعادة ضبط نظيفة عند ضرب وقف الخسارة فقط لتوليد إشارة جديدة باتجاه واحد
             active_signals["is_locked"] = False
             active_signals["last_alert_sent"] = False
 
-    # --- فلتر اتجاه السوق المعتمد على النطاق الزمني والسعري لمنع التناقض ---
-    # نعتمد على الاتجاه العام بناءً على نطاق السعر لضمان عدم تداخل الإشارات المعاكسة
     trend_selector = int(price // 10) % 2  
 
     if trend_selector == 0:
-        # اتجاه هابط - يمنع الشراء تماماً ويصدر صفقات بيع فقط من مناطق العرض
         signal_type = "📉 بيع (SELL) - منطقة عرض وتجميع علوي"
         ob_low = round(price - 1.5, 2)
         ob_high = round(price + 3.5, 2)
@@ -141,7 +143,6 @@ def get_dynamic_institutional_levels(price):
         tf_1h = "رفض سعري من منطقة السيولة (Bearish OB)"
         tf_4h = "ارتداد هيكلي هابط من القمة"
     else:
-        # اتجاه صاعد - يمنع البيع تماماً ويصدر صفقات شراء فقط من مناطق الطلب
         signal_type = "📈 شراء (BUY) - منطقة طلب وتجميع سُفلي"
         ob_low = round(price - 3.5, 2)
         ob_high = round(price + 1.5, 2)
@@ -157,7 +158,6 @@ def get_dynamic_institutional_levels(price):
         tf_1h = "اختراق ناجح لفوليوم السيولة (Bullish OB)"
         tf_4h = "تمركز سيولة شرائية من القاع"
 
-    # تثبيت الصفقة وعدم تغييرها عشوائياً إلا بضرب الوقف أو انتهاء النطاق
     active_signals = {
         "is_locked": True,
         "signal_type": signal_type,
@@ -180,7 +180,6 @@ def get_support_resistance_levels(price):
     return round(price + 25.0, 2), round(price + 15.0, 2), round(price + 7.0, 2), \
            round(price - 7.0, 2), round(price - 15.0, 2), round(price - 28.0, 2)
 
-# --- مراقبة السوق الخلفية لكافة الفريمات ---
 def background_market_monitor():
     while True:
         try:
@@ -188,8 +187,7 @@ def background_market_monitor():
             if users:
                 price = get_gold_price()
                 zone_entree, stop_loss, tp1, tp2, tp3, signal_type, prob, tf_15m, tf_30m, tf_1h, tf_4h = get_dynamic_institutional_levels(price)
-                
-                # إرسال الصفقة تلقائياً للمشتركين فور رصدها دون تضارب
+
                 if active_signals["is_locked"] and not active_signals["last_alert_sent"]:
                     active_signals["last_alert_sent"] = True
                     signal_msg = (
@@ -220,7 +218,6 @@ def background_market_monitor():
 
 threading.Thread(target=background_market_monitor, daemon=True).start()
 
-# --- الروابط وأوامر البوت ---
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
     json_str = request.get_data().decode('utf-8')
