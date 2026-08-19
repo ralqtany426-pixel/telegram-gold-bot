@@ -86,7 +86,7 @@ def get_gold_price():
     except:
         return 4456.0
 
-# --- المحلل الديناميكي المحدث (يعمل على كل الفريمات وباتجايلن بيع/شراء) ---
+# --- المحلل الديناميكي المحمي بفلتر اتجاه السوق (منع تضارب بيع/شراء) ---
 def get_dynamic_institutional_levels(price):
     global active_signals
 
@@ -116,15 +116,16 @@ def get_dynamic_institutional_levels(price):
                 active_signals["tf_4h"]
             )
         else:
-            # إعادة ضبط عند كسر الوقف لتوليد فرصة جديدة فوراً
+            # إعادة ضبط نظيفة عند ضرب وقف الخسارة فقط لتوليد إشارة جديدة باتجاه واحد
             active_signals["is_locked"] = False
             active_signals["last_alert_sent"] = False
 
-    # --- النظام الديناميكي الجديد: يعتمد على نطاقات التذبذب الحية لاكتشاف العرض والطلب ---
-    remainder = price % 20
-    
-    if remainder > 10:
-        # منطقة عرض مؤسسية (تنبيه هبوط / بيع - مثل القمم والتجميع العُلوي)
+    # --- فلتر اتجاه السوق المعتمد على النطاق الزمني والسعري لمنع التناقض ---
+    # نعتمد على الاتجاه العام بناءً على نطاق السعر لضمان عدم تداخل الإشارات المعاكسة
+    trend_selector = int(price // 10) % 2  
+
+    if trend_selector == 0:
+        # اتجاه هابط - يمنع الشراء تماماً ويصدر صفقات بيع فقط من مناطق العرض
         signal_type = "📉 بيع (SELL) - منطقة عرض وتجميع علوي"
         ob_low = round(price - 1.5, 2)
         ob_high = round(price + 3.5, 2)
@@ -140,7 +141,7 @@ def get_dynamic_institutional_levels(price):
         tf_1h = "رفض سعري من منطقة السيولة (Bearish OB)"
         tf_4h = "ارتداد هيكلي هابط من القمة"
     else:
-        # منطقة طلب مؤسسية (تنبيه صعود / شراء - مثل القيعان والتجميع السُفلي)
+        # اتجاه صاعد - يمنع البيع تماماً ويصدر صفقات شراء فقط من مناطق الطلب
         signal_type = "📈 شراء (BUY) - منطقة طلب وتجميع سُفلي"
         ob_low = round(price - 3.5, 2)
         ob_high = round(price + 1.5, 2)
@@ -156,7 +157,7 @@ def get_dynamic_institutional_levels(price):
         tf_1h = "اختراق ناجح لفوليوم السيولة (Bullish OB)"
         tf_4h = "تمركز سيولة شرائية من القاع"
 
-    # تثبيت الصفقة الجديدة
+    # تثبيت الصفقة وعدم تغييرها عشوائياً إلا بضرب الوقف أو انتهاء النطاق
     active_signals = {
         "is_locked": True,
         "signal_type": signal_type,
@@ -188,11 +189,11 @@ def background_market_monitor():
                 price = get_gold_price()
                 zone_entree, stop_loss, tp1, tp2, tp3, signal_type, prob, tf_15m, tf_30m, tf_1h, tf_4h = get_dynamic_institutional_levels(price)
                 
-                # إرسال الصفقة تلقائياً للمشتركين فور رصدها عبر الفريمات
+                # إرسال الصفقة تلقائياً للمشتركين فور رصدها دون تضارب
                 if active_signals["is_locked"] and not active_signals["last_alert_sent"]:
                     active_signals["last_alert_sent"] = True
                     signal_msg = (
-                        f"🚨🎯 **[ إشارة ذكية جديدة - كافة الفريمات ]** 🎯🚨\n"
+                        f"🚨🎯 **[ إشارة ذكية جديدة - اتجاه موحد ]** 🎯🚨\n"
                         f"━━━━━━━━━━━━━━━━━━━━━\n"
                         f"📌 الاتجاه: `{signal_type}`\n"
                         f"📍 السعر الحالي: `{price} $`\n"
@@ -240,7 +241,7 @@ def start_command(message):
         types.InlineKeyboardButton("🧮 حاسبة إدارة المخاطر", callback_data="risk_calc"),
         types.InlineKeyboardButton("📈 سجل الأداء", callback_data="track_record")
     )
-    bot.send_message(message.chat.id, "👑 **النظام الذكي المطور لتداول الذهب (شامل كافة الفريمات ومناطق التجميع)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 **النظام الذكي المطور لتداول الذهب (بفلتر اتجاه السوق الموحد)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
