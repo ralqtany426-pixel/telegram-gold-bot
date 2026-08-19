@@ -4,6 +4,7 @@ import requests
 import telebot
 import threading
 import time
+import datetime
 from flask import Flask, request
 from telebot import types
 
@@ -91,6 +92,23 @@ def get_gold_price():
     except:
         fallback_price = 4485.0 + PRICE_OFFSET
         return round(fallback_price, 2)
+
+# --- 📰 نظام تنبيهات الأخبار الاقتصادية ---
+def get_upcoming_news():
+    # يمكنك تعديل أوقات الأخبار القوية هنا (بصيغة ساعة:دقيقة بتوقيت منصتك)
+    now = datetime.datetime.now()
+    news_schedule = ["14:30", "16:00", "20:00"] 
+    
+    for time_str in news_schedule:
+        try:
+            news_time = datetime.datetime.strptime(time_str, "%H:%M").time()
+            current_time = now.time()
+            # تنبيه قبل دقيقة واحدة من الخبر
+            if (news_time.hour == current_time.hour and news_time.minute - current_time.minute == 1):
+                return f"⚠️🚨 **تنبيه عاجل (أخبار الذهب):**\nسصدر خبر اقتصادي قوي جداً خلال **دقيقة واحدة** ({time_str})! جهز صفقتك وكن حذراً من التقلبات الحادة."
+        except:
+            pass
+    return None
 
 # --- المحلل الديناميكي المحمي بفلتر اتجاه السوق (منع تضارب بيع/شراء) ---
 def get_dynamic_institutional_levels(price):
@@ -184,6 +202,16 @@ def background_market_monitor():
         try:
             users = get_alert_users()
             if users:
+                # 1. فحص وتنبيه الأخبار الاقتصادية أولاً
+                news_alert = get_upcoming_news()
+                if news_alert:
+                    for chat_id in users:
+                        try:
+                            bot.send_message(chat_id, news_alert, parse_mode="Markdown")
+                        except:
+                            pass
+
+                # 2. مراقبة السوق والصفقات
                 price = get_gold_price()
                 zone_entree, stop_loss, tp1, tp2, tp3, signal_type, prob, tf_15m, tf_30m, tf_1h, tf_4h = get_dynamic_institutional_levels(price)
 
@@ -237,7 +265,7 @@ def start_command(message):
         types.InlineKeyboardButton("🧮 حاسبة إدارة المخاطر", callback_data="risk_calc"),
         types.InlineKeyboardButton("📈 سجل الأداء", callback_data="track_record")
     )
-    bot.send_message(message.chat.id, "👑 **النظام الذكي المطور لتداول الذهب (بفلتر اتجاه السوق الموحد)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 **النظام الذكي المطور لتداول الذهب (مع تنبيهات الأخبار)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
@@ -291,7 +319,7 @@ def callback(call):
             f"⛔ وقف الخسارة: `{stop_loss} $`\n"
             f"🎯 الأهداف: `{tp1} / {tp2} / {tp3} $`"
         )
-        bot.answer_callback_query(call.id)
+        bot.answer_callback_query.call_id
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
 
     elif call.data == "toggle_alerts":
