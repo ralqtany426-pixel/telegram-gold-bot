@@ -11,14 +11,16 @@ TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-last_price = None
 open_daily_price = 4370.0 
 
-# --- 1. إعداد وتحديث قاعدة البيانات ---
+# --- 1. إعداد وتحديث قاعدة البيانات (مع دعم حالة التنبيهات) ---
 def init_db():
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (chat_id INTEGER PRIMARY KEY)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+                        chat_id INTEGER PRIMARY KEY,
+                        alerts_enabled INTEGER DEFAULT 1
+                    )''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS performance (
                         id INTEGER PRIMARY KEY AUTOINCREMENT, 
                         status TEXT, 
@@ -32,14 +34,31 @@ init_db()
 def add_user(chat_id):
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute('INSERT OR IGNORE INTO users (chat_id) VALUES (?)', (chat_id,))
+    cursor.execute('INSERT OR IGNORE INTO users (chat_id, alerts_enabled) VALUES (?, 1)', (chat_id,))
     conn.commit()
     conn.close()
 
-def get_all_users():
+def toggle_user_alerts(chat_id):
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute('SELECT chat_id FROM users')
+    cursor.execute('SELECT alerts_enabled FROM users WHERE chat_id = ?', (chat_id,))
+    res = cursor.fetchone()
+    if res is not None:
+        new_status = 0 if res[0] == 1 else 1
+        cursor.execute('UPDATE users SET alerts_enabled = ? WHERE chat_id = ?', (new_status, chat_id))
+        conn.commit()
+        conn.close()
+        return new_status
+    else:
+        cursor.execute('INSERT INTO users (chat_id, alerts_enabled) VALUES (?, 1)', (chat_id,))
+        conn.commit()
+        conn.close()
+        return 1
+
+def get_alert_users():
+    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('SELECT chat_id FROM users WHERE alerts_enabled = 1')
     users = [row[0] for row in cursor.fetchall()]
     conn.close()
     return users
@@ -54,8 +73,6 @@ def get_gold_price():
 
 def get_institutional_levels(price):
     change_from_open = price - open_daily_price
-    
-    # حساب نسبة النجاح ديناميكياً بناءً على حجم الحركة والزخم
     abs_change = abs(change_from_open)
     base_probability = 82
     calculated_probability = min(96, base_probability + int(abs_change * 0.5))
@@ -70,7 +87,6 @@ def get_institutional_levels(price):
         tp2 = round(price - 18.0, 2)
         tp3 = round(price - 32.0, 2)
         
-        # تحليل الفريمات لاتجاه البيع
         tf_15m = "مقاومة لحظية واختبار خط الاتجاه الهابط"
         tf_1h = "تشبع شرائي واجتياز لفوليوم الهبوط"
         tf_4h = "ارتداد من هجوم الدببة (Bearish Order Block)"
@@ -85,7 +101,6 @@ def get_institutional_levels(price):
         tp2 = round(price + 22.0, 2)
         tp3 = round(price + 40.0, 2)
         
-        # تحليل الفريمات لاتجاه الشراء
         tf_15m = "دعم قوي وتشكل نموذج انعكاسي إيجابي"
         tf_1h = "اختراق ناجح لمنطقة السيولة وتجميع صاعد"
         tf_4h = "ارتداد من قاعدة طلب قوية (Bullish OB)"
@@ -100,32 +115,36 @@ def get_support_resistance_levels(price):
 # --- دالة التحذير الخارق التلقائي ---
 def send_ultimate_alert(chat_id, price, signal_type, zone_entree, stop_loss, tp1, probability):
     alert_message = (
-        f"🚨🔥 **[ تنبيــــه الـسـوق الـخــــارق ]** 🔥🚨\n"
+        f"🚨🔥 **[ تـنبـيـه الـسـوق الـخــــارق ]** 🔥🚨\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"⚡ **فرصة ذهبية مؤكدة - High Probability!**\n"
         f"📍 السعر الحالي: `{price} $`\n"
         f"📌 الاتجاه: `{signal_type}`\n"
-        f"🎯 نسبة نجاح الصفقة: `__ {probability}% __` 🌟\n"
+        f"🎯 نسبة نجاح الصفقة: `{probability}%` 🌟\n"
         f"🎯 منطقة التفعيل: `{zone_entree}`\n"
         f"⛔ وقف الخسارة: `{stop_loss} $`\n"
         f"🎯 الهدف الأساسي (TP1): `{tp1} $`\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ *ملاحظة: توافق تام للسيولة عبر جميع الفريمات.*"
+        f"⚠️ *ملاحظة: تم رصد توافق السيولة المؤسسية عبر الفريمات.*"
     )
-    bot.send_message(chat_id, alert_message, parse_mode="Markdown")
+    try:
+        bot.send_message(chat_id, alert_message, parse_mode="Markdown")
+    except:
+        pass
 
-# --- مراقبة السوق الخلفية ---
+# --- مراقبة السوق الخلفية الخارقة ---
 def background_market_monitor():
     while True:
         try:
-            users = get_all_users()
+            users = get_alert_users()
             if users:
                 price = get_gold_price()
                 zone_entree, stop_loss, tp1, _, _, signal_type, prob, _, _, _, _ = get_institutional_levels(price)
-                if 4365.0 <= price <= 4369.0:
+                # إرسال التنبيه إذا كان السعر ضمن النطاق المستهدف أو بناءً على حركة قوية
+                if 4360.0 <= price <= 4375.0:
                     for chat_id in users:
                         send_ultimate_alert(chat_id, price, signal_type, zone_entree, stop_loss, tp1, prob)
-                        time.sleep(3600) 
+                    time.sleep(1800) # فاصل زمني نصف ساعة بين التنبيهات التلقائية لعدم الإزعاج
             time.sleep(60)
         except:
             time.sleep(60)
@@ -150,12 +169,13 @@ def start_command(message):
         types.InlineKeyboardButton("🛡️ الدعم والمقاومة المؤسسية", callback_data="support_resistance"),
         types.InlineKeyboardButton("🚀 صفقات زيرو انعكاس", callback_data="zero_draw"),
         types.InlineKeyboardButton("⚡ صفقات مؤسسية (VIP)", callback_data="pro_signals"),
+        types.InlineKeyboardButton("🔔 تفعيل/إيقاف التنبيهات الخارقة", callback_data="toggle_alerts"),
         types.InlineKeyboardButton("🧮 حاسبة إدارة المخاطر", callback_data="risk_calc"),
         types.InlineKeyboardButton("📈 سجل أداء البوت", callback_data="track_record")
     )
-    bot.send_message(message.chat.id, "👑 **النظام الذكي المتطور لتداول الذهب**", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 **النظام الذكي المتطور لتداول الذهب**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
 
-# --- معالجة الأزرار مع الفريمات ونسبة النجاح ---
+# --- معالجة الأزرار التفاعلية ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
     price = get_gold_price()
@@ -217,6 +237,15 @@ def callback(call):
         )
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+
+    elif call.data == "toggle_alerts":
+        new_status = toggle_user_alerts(call.message.chat.id)
+        if new_status == 1:
+            status_text = "🟢 **مفعلة بنجاح!**\nسستلقى التنبيهات الخارقة والفرص الفورية تلقائياً."
+        else:
+            status_text = "🔴 **تم إيقاف التنبيهات.**\nلن تتلقى رسائل تلقائية حتى تقوم بتفعيلها مرة أخرى."
+        bot.answer_callback_query(call.id, text="تم تحديث حالة التنبيهات!")
+        bot.send_message(call.message.chat.id, status_text, parse_mode="Markdown")
 
     elif call.data == "risk_calc":
         msg = (
