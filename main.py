@@ -13,7 +13,8 @@ bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
 # --- 🛠️ ضبط الفارق السعري (Offset) ---
-PRICE_OFFSET = -2.4 
+# قم بتعديل هذا الرقم ليطابق سعر الميتاتريدر بدقة (مثلاً 0.0 أو إضافة قيمة موجبة/سالبة)
+PRICE_OFFSET = 0.0 
 
 # --- متغيرات لتثبيت حالة الصفقة لكل فريم ومنع التكرار العشوائي ---
 active_signals = {
@@ -129,7 +130,6 @@ def get_dynamic_institutional_levels(price):
                 active_signals["tp1"],
                 active_signals["tp2"],
                 active_signals["tp3"],
-                active_signals["signal_type"],
                 active_signals["probability"],
                 active_signals["tf_15m"],
                 active_signals["tf_30m"],
@@ -235,7 +235,6 @@ def background_market_monitor():
                             bot.send_message(chat_id, signal_msg, parse_mode="Markdown")
                         except:
                             pass
-            # تم تقليل الوقت هنا إلى 15 ثانية لتسريع إرسال الإشارات
             time.sleep(15)
         except:
             time.sleep(15)
