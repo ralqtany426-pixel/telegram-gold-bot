@@ -103,7 +103,7 @@ def get_upcoming_news():
             news_time = datetime.datetime.strptime(time_str, "%H:%M").time()
             current_time = now.time()
             if (news_time.hour == current_time.hour and news_time.minute - current_time.minute == 1):
-                return f"⚠️🚨 **تنبيه عاجل (أخبار الذهب):**\nسصدر خبر اقتصادي قوي جداً خلال **دقيقة واحدة** ({time_str})! جهز صفقتك وكن حذراً من التقلبات الحادة."
+                return f"⚠️🚨 **تنبيه عاجل (أخبار الذهب):**\nسيصدر خبر اقتصادي قوي جداً خلال **دقيقة واحدة** ({time_str})! جهز صفقتك وكن حذراً من التقلبات الحادة."
         except:
             pass
     return None
@@ -235,9 +235,10 @@ def background_market_monitor():
                             bot.send_message(chat_id, signal_msg, parse_mode="Markdown")
                         except:
                             pass
-            time.sleep(45)
+            # تم تقليل الوقت هنا إلى 15 ثانية لتسريع إرسال الإشارات
+            time.sleep(15)
         except:
-            time.sleep(45)
+            time.sleep(15)
 
 threading.Thread(target=background_market_monitor, daemon=True).start()
 
@@ -315,7 +316,7 @@ def callback(call):
             f"⛔ وقف الخسارة: `{stop_loss} $`\n"
             f"🎯 الأهداف: `{tp1} / {tp2} / {tp3} $`"
         )
-        bot.answer_callback_query(call.id)  # تم إصلاحها هنا بنجاح
+        bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
 
     elif call.data == "toggle_alerts":
