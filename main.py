@@ -95,22 +95,20 @@ def get_gold_price():
 
 # --- 📰 نظام تنبيهات الأخبار الاقتصادية ---
 def get_upcoming_news():
-    # يمكنك تعديل أوقات الأخبار القوية هنا (بصيغة ساعة:دقيقة بتوقيت منصتك)
     now = datetime.datetime.now()
     news_schedule = ["14:30", "16:00", "20:00"] 
-    
+
     for time_str in news_schedule:
         try:
             news_time = datetime.datetime.strptime(time_str, "%H:%M").time()
             current_time = now.time()
-            # تنبيه قبل دقيقة واحدة من الخبر
             if (news_time.hour == current_time.hour and news_time.minute - current_time.minute == 1):
                 return f"⚠️🚨 **تنبيه عاجل (أخبار الذهب):**\nسصدر خبر اقتصادي قوي جداً خلال **دقيقة واحدة** ({time_str})! جهز صفقتك وكن حذراً من التقلبات الحادة."
         except:
             pass
     return None
 
-# --- المحلل الديناميكي المحمي بفلتر اتجاه السوق (منع تضارب بيع/شراء) ---
+# --- المحلل الديناميكي المحمي بفلتر اتجاه السوق ---
 def get_dynamic_institutional_levels(price):
     global active_signals
 
@@ -202,7 +200,6 @@ def background_market_monitor():
         try:
             users = get_alert_users()
             if users:
-                # 1. فحص وتنبيه الأخبار الاقتصادية أولاً
                 news_alert = get_upcoming_news()
                 if news_alert:
                     for chat_id in users:
@@ -211,7 +208,6 @@ def background_market_monitor():
                         except:
                             pass
 
-                # 2. مراقبة السوق والصفقات
                 price = get_gold_price()
                 zone_entree, stop_loss, tp1, tp2, tp3, signal_type, prob, tf_15m, tf_30m, tf_1h, tf_4h = get_dynamic_institutional_levels(price)
 
@@ -319,7 +315,7 @@ def callback(call):
             f"⛔ وقف الخسارة: `{stop_loss} $`\n"
             f"🎯 الأهداف: `{tp1} / {tp2} / {tp3} $`"
         )
-        bot.answer_callback_query.call_id
+        bot.answer_callback_query(call.id)  # تم إصلاحها هنا بنجاح
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
 
     elif call.data == "toggle_alerts":
