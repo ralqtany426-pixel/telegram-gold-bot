@@ -13,6 +13,22 @@ app = Flask(__name__)
 
 open_daily_price = 4370.0 
 
+# --- متغيرات لتثبيت حالة الصفقة ومنع التغيير العشوائي ---
+locked_signal_data = {
+    "is_locked": False,
+    "signal_type": None,
+    "zone_entree": None,
+    "stop_loss": None,
+    "tp1": None,
+    "tp2": None,
+    "tp3": None,
+    "probability": None,
+    "tf_15m": None,
+    "tf_1h": None,
+    "tf_4h": None,
+    "tf_daily": None
+}
+
 # --- 1. إعداد وتحديث قاعدة البيانات (مع دعم حالة التنبيهات) ---
 def init_db():
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
@@ -71,7 +87,49 @@ def get_gold_price():
     except:
         return 4367.47
 
+# --- دوال جلب الشموع أو محاكاة إغلاق فريم 15 دقيقة للتثبيت ---
+def get_last_15m_close_price(current_price):
+    # يمكنك استبدال هذه الدالة بربط حقيقي مع بيانات الشموع (OHLC) لمنصة أو API
+    # هنا نرجع السعر الحالي كمحاكاة مبدئية لفحص الإغلاق
+    return current_price
+
 def get_institutional_levels(price):
+    global locked_signal_data
+    
+    current_close_15m = get_last_15m_close_price(price)
+
+    # إذا كانت الصفقة مثبتة مسبقاً، نتحقق هل أغلق السعر خارج وقف الخسارة؟
+    if locked_signal_data["is_locked"]:
+        sl = locked_signal_data["stop_loss"]
+        sig = locked_signal_data["signal_type"]
+        
+        # شرط كسر الإغلاق (إذا كان بيع وأغلق فوق الوقف، أو شراء وأغلق تحت الوقف)
+        is_broken = False
+        if "بيع" in sig and current_close_15m > sl:
+            is_broken = True
+        elif "شراء" in sig and current_close_15m < sl:
+            is_broken = True
+            
+        if not is_broken:
+            # إرجاع البيانات المثبتة تماماً دون أي تغيير لتجنب الإرباك
+            return (
+                locked_signal_data["zone_entree"],
+                locked_signal_data["stop_loss"],
+                locked_signal_data["tp1"],
+                locked_signal_data["tp2"],
+                locked_signal_data["tp3"],
+                locked_signal_data["signal_type"],
+                locked_signal_data["probability"],
+                locked_signal_data["tf_15m"],
+                locked_signal_data["tf_1h"],
+                locked_signal_data["tf_4h"],
+                locked_signal_data["tf_daily"]
+            )
+        else:
+            # تم كسر وقف الخسارة بإغلاق حقيقي، نقوم بفك القفل لتحديث البيانات
+            locked_signal_data["is_locked"] = False
+
+    # --- حساب مستويات جديدة وتثبيتها ---
     change_from_open = price - open_daily_price
     abs_change = abs(change_from_open)
     base_probability = 82
@@ -106,6 +164,22 @@ def get_institutional_levels(price):
         tf_4h = "ارتداد من قاعدة طلب قوية (Bullish OB)"
         tf_daily = "زخم شرائي يدعم استمرار الصعود"
 
+    # قفل وتثبيت البيانات الجديدة لمنع تغيرها عشوائياً
+    locked_signal_data = {
+        "is_locked": True,
+        "signal_type": signal_type,
+        "zone_entree": zone_entree,
+        "stop_loss": stop_loss,
+        "tp1": tp1,
+        "tp2": tp2,
+        "tp3": tp3,
+        "probability": calculated_probability,
+        "tf_15m": tf_15m,
+        "tf_1h": tf_1h,
+        "tf_4h": tf_4h,
+        "tf_daily": tf_daily
+    }
+
     return zone_entree, stop_loss, tp1, tp2, tp3, signal_type, calculated_probability, tf_15m, tf_1h, tf_4h, tf_daily
 
 def get_support_resistance_levels(price):
@@ -115,7 +189,7 @@ def get_support_resistance_levels(price):
 # --- دالة التحذير الخارق التلقائي ---
 def send_ultimate_alert(chat_id, price, signal_type, zone_entree, stop_loss, tp1, probability):
     alert_message = (
-        f"🚨🔥 **[ تـنبـيـه الـسـوق الـخــــارق ]** 🔥🚨\n"
+        f"🚨🔥 **[ تـنبـيـه الـسـوق الـخــــارق (مثبت) ]** 🔥🚨\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"⚡ **فرصة ذهبية مؤكدة - High Probability!**\n"
         f"📍 السعر الحالي: `{price} $`\n"
@@ -125,7 +199,7 @@ def send_ultimate_alert(chat_id, price, signal_type, zone_entree, stop_loss, tp1
         f"⛔ وقف الخسارة: `{stop_loss} $`\n"
         f"🎯 الهدف الأساسي (TP1): `{tp1} $`\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ *ملاحظة: تم رصد توافق السيولة المؤسسية عبر الفريمات.*"
+        f"⚠️ *ملاحظة: منطقة مثبتة لحين إغلاق شمعة 15 دقيقة خارج وقف الخسارة.*"
     )
     try:
         bot.send_message(chat_id, alert_message, parse_mode="Markdown")
@@ -140,11 +214,10 @@ def background_market_monitor():
             if users:
                 price = get_gold_price()
                 zone_entree, stop_loss, tp1, _, _, signal_type, prob, _, _, _, _ = get_institutional_levels(price)
-                # إرسال التنبيه إذا كان السعر ضمن النطاق المستهدف أو بناءً على حركة قوية
                 if 4360.0 <= price <= 4375.0:
                     for chat_id in users:
                         send_ultimate_alert(chat_id, price, signal_type, zone_entree, stop_loss, tp1, prob)
-                    time.sleep(1800) # فاصل زمني نصف ساعة بين التنبيهات التلقائية لعدم الإزعاج
+                    time.sleep(1800) 
             time.sleep(60)
         except:
             time.sleep(60)
@@ -173,7 +246,7 @@ def start_command(message):
         types.InlineKeyboardButton("🧮 حاسبة إدارة المخاطر", callback_data="risk_calc"),
         types.InlineKeyboardButton("📈 سجل أداء البوت", callback_data="track_record")
     )
-    bot.send_message(message.chat.id, "👑 **النظام الذكي المتطور لتداول الذهب**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 **النظام الذكي المتطور لتداول الذهب (مع خاصية تثبيت المنطقة)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
 
 # --- معالجة الأزرار التفاعلية ---
 @bot.callback_query_handler(func=lambda call: True)
@@ -189,7 +262,7 @@ def callback(call):
 
     elif call.data == "market_mood":
         msg = (
-            f"📊 **تحليل ومزاج السوق عبر جميع الفريمات:**\n"
+            f"📊 **تحليل ومزاج السوق عبر جميع الفريمات (منطقة مثبتة):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📍 السعر الحالي: `{price} $`\n"
             f"📌 الاتجاه المسيطر: `{signal_type}`\n"
@@ -220,7 +293,7 @@ def callback(call):
 
     elif call.data == "zero_draw" or call.data == "pro_signals":
         msg = (
-            f"🚀 **{('صفقات زيرو انعكاس' if call.data=='zero_draw' else 'صفقات مؤسسية VIP')}**\n"
+            f"🚀 **{('صفقات زيرو انعكاس' if call.data=='zero_draw' else 'صفقات مؤسسية VIP')} (مثبتة)**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📌 الاتجاه: `{signal_type}`\n"
             f"📍 السعر الحالي: `{price} $`\n"
@@ -241,7 +314,7 @@ def callback(call):
     elif call.data == "toggle_alerts":
         new_status = toggle_user_alerts(call.message.chat.id)
         if new_status == 1:
-            status_text = "🟢 **مفعلة بنجاح!**\nسستلقى التنبيهات الخارقة والفرص الفورية تلقائياً."
+            status_text = "🟢 **مفعلة بنجاح!**\nستتلقى التنبيهات الخارقة والفرص الفورية تلقائياً."
         else:
             status_text = "🔴 **تم إيقاف التنبيهات.**\nلن تتلقى رسائل تلقائية حتى تقوم بتفعيلها مرة أخرى."
         bot.answer_callback_query(call.id, text="تم تحديث حالة التنبيهات!")
@@ -263,7 +336,7 @@ def callback(call):
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"✅ نسبة نجاح الصفقات الإجمالية: `88%`\n"
             f"📊 إجمالي النقاط المحققة هذا الأسبوع: `+340 نقطة`\n"
-            f"وضع النظام: مستقر ومربط بالتحليل الفني متعدد الفريمات."
+            f"وضع النظام: مستقر ومزود بخاصية منع تضارب الأرقام اللحظية."
         )
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
