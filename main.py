@@ -74,8 +74,9 @@ def get_support_resistance_levels(price):
 
     return res3, res2, res1, sup1, sup2, sup3
 
-# --- مراقبة السوق في الخلفية ---
+# --- مراقبة السوق في الخلفية (مع تأخير لمنع حظر 429) ---
 def background_market_monitor():
+    time.sleep(10) # انتظار حتى يتم تشغيل البوت تماماً
     while True:
         try:
             users = get_all_users()
@@ -97,6 +98,7 @@ def background_market_monitor():
                             f"━━━━━━━━━━━━━━━━━━━━━",
                             parse_mode="Markdown"
                         )
+                        time.sleep(1) # فاصل زمني بين كل رسالة وأخرى لتفادي ضغط التيليجرام
                     except:
                         pass
                 time.sleep(7200) 
@@ -133,19 +135,23 @@ def tradingview_webhook():
         users = get_all_users()
         if users:
             for chat_id in users:
-                bot.send_message(
-                    chat_id,
-                    f"🔥 **[TradingView Live Signal] - إشارة حقيقية من الشارت!**\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🟢 **الاتجاه:** `{action} XAU/USD`\n"
-                    f"📊 **النموذج:** `{setup_type}`\n"
-                    f"📍 **سعر التفعيل:** `{price} $`\n"
-                    f"🧱 **منطقة الطلب (Demand):** `{demand_zone}`\n"
-                    f"🧱 **منطقة العرض (Supply):** `{supply_zone}`\n"
-                    f"⛔ **وقف الخسارة:** `{sl}`\n"
-                    f"🎯 **الأهداف:** `{tp1} / {tp2} / {tp3}`",
-                    parse_mode="Markdown"
-                )
+                try:
+                    bot.send_message(
+                        chat_id,
+                        f"🔥 **[TradingView Live Signal] - إشارة حقيقية من الشارت!**\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🟢 **الاتجاه:** `{action} XAU/USD`\n"
+                        f"📊 **النموذج:** `{setup_type}`\n"
+                        f"📍 **سعر التفعيل:** `{price} $`\n"
+                        f"🧱 **منطقة الطلب (Demand):** `{demand_zone}`\n"
+                        f"🧱 **منطقة العرض (Supply):** `{supply_zone}`\n"
+                        f"⛔ **وقف الخسارة:** `{sl}`\n"
+                        f"🎯 **الأهداف:** `{tp1} / {tp2} / {tp3}`",
+                        parse_mode="Markdown"
+                    )
+                    time.sleep(0.5)
+                except:
+                    pass
         return "Webhook Processed Successfully", 200
     except Exception as e:
         return str(e), 400
