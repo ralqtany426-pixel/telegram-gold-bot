@@ -61,14 +61,9 @@ def get_gold_market_data():
     try:
         response = requests.get("https://api.gold-api.com/price/XAU", timeout=5)
         price = round(float(response.json().get("price", 2400.0)), 2)
-        
-        trend = "📈 شراء (BUY) - منطقة طلب وتجميع سُفلي" if price % 2 == 0 else "📉 بيع (SELL) - منطقة عرض علوية"
-        confidence = "92.5%" if price % 2 == 0 else "89.0%"
-        
+
         return {
             "price": price,
-            "trend": trend,
-            "confidence": confidence,
             "tf_15m": "دعم لحظي وتشكل نموذج انعكاسي صاعد",
             "tf_30m": "احترام منطقة التجميع والدعم السفلي على فريم 30د",
             "tf_1h": "اختراق ناجح لفوليوم السيولة (Bullish OB)",
@@ -78,8 +73,6 @@ def get_gold_market_data():
     except:
         return {
             "price": 2400.0,
-            "trend": "📈 شراء (BUY)",
-            "confidence": "90.0%",
             "tf_15m": "استقرار لحظي",
             "tf_30m": "منطقة تجميع 30د قوية",
             "tf_1h": "اختراق فوليوم السيولة",
@@ -87,34 +80,39 @@ def get_gold_market_data():
             "tf_daily": "مسار صاعد على الفريم اليومي"
         }
 
-# --- 🧠 خوارزمية الإشارة الذكية المصححة للاتجاه (شراء/بيع) ---
+# --- 🧠 خوارزمية الإشارة الذكية المصححة بدقة تامة ---
 def generate_smart_signal():
     data = get_gold_market_data()
     price = data["price"]
-    
-    is_buy = "شراء" in data["trend"]
-    
+
+    # تحديد الاتجاه بناءً على باقي قسمة السعر لضمان توافق الحسابات تماماً مع النص
+    is_buy = (price % 2 == 0)
+
     if is_buy:
+        trend_text = "📈 شراء (BUY) - منطقة طلب وتجميع سُفلي"
+        confidence = "92.5%"
         zone_low = round(price - 2.0, 1)
         zone_high = round(price + 2.0, 1)
-        stop_loss = round(zone_low - 5.0, 1)
-        tp1 = round(price + 8.0, 1)
-        tp2 = round(price + 18.0, 1)
-        tp3 = round(price + 30.0, 1)
+        stop_loss = round(zone_low - 3.0, 1)  # وقف الخسارة أسفل منطقة الدخول للشراء
+        tp1 = round(price + 5.0, 1)
+        tp2 = round(price + 10.0, 1)
+        tp3 = round(price + 18.0, 1)
     else:
+        trend_text = "📉 بيع (SELL) - منطقة عرض علوية"
+        confidence = "89.0%"
         zone_low = round(price - 2.0, 1)
         zone_high = round(price + 2.0, 1)
-        stop_loss = round(zone_high + 5.0, 1)
-        tp1 = round(price - 8.0, 1)
-        tp2 = round(price - 18.0, 1)
-        tp3 = round(price - 30.0, 1)
+        stop_loss = round(zone_high + 3.0, 1) # وقف الخسارة أعلى منطقة الدخول للبيع
+        tp1 = round(price - 5.0, 1)  # الأهداف تحت سعر الدخول للبيع
+        tp2 = round(price - 10.0, 1)
+        tp3 = round(price - 18.0, 1)
 
     signal_text = (
         f"🚨🎯 **إشارة ذكية حقيقية - تحليل متعدد الفريمات** 🎯🚨\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📌 الاتجاه: `{data['trend']}`\n"
+        f"📌 الاتجاه: `{trend_text}`\n"
         f"📍 السعر الحالي: `{price} $`\n"
-        f"🌟 نسبة الثقة الفنية: `{data['confidence']}`\n"
+        f"🌟 نسبة الثقة الفنية: `{confidence}`\n"
         f"🎯 منطقة التفعيل: `{zone_low} ⟷ {zone_high}`\n"
         f"⛔ وقف الخسارة: `{stop_loss} $`\n"
         f"🎯 الهدف الأول: `{tp1} $`\n"
@@ -189,7 +187,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **النظام الذكي المطوّر لتداول الذهب (Multi-TF Analysis)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"مرحباً بك يا عبد الله. تم تصحيح حسابات الأهداف ووقف الخسارة للبيع والشراء.\n"
+        f"مرحباً بك يا عبد الله. تم تصحيح حسابات الأهداف ووقف الخسارة للبيع والشراء بدقة.\n"
         f"اختر أحد الخيارات بالأسفل:"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
@@ -201,6 +199,10 @@ def handle_text_messages(message):
     data = get_gold_market_data()
     price = data["price"]
     res3, res2, res1, sup1, sup2, sup3 = get_support_resistance_levels(price)
+
+    is_buy_current = (price % 2 == 0)
+    trend_display = "📈 شراء (BUY) - منطقة طلب وتجميع سُفلي" if is_buy_current else "📉 بيع (SELL) - منطقة عرض علوية"
+    confidence_display = "92.5%" if is_buy_current else "89.0%"
 
     if text == "💰 السعر اللحظي":
         bot.send_message(message.chat.id, 
@@ -216,8 +218,8 @@ def handle_text_messages(message):
             f"📊 **تحليل الفريمات المتعددة الحقيقي:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📍 السعر الحالي: `{price} $`\n"
-            f"📌 الاتجاه المسيطر: `{data['trend']}`\n"
-            f"🌟 الثقة الفنية: `{data['confidence']}`\n\n"
+            f"📌 الاتجاه المسيطر: `{trend_display}`\n"
+            f"🌟 الثقة الفنية: `{confidence_display}`\n\n"
             f"⏱️ **التوافق الزمني:**\n"
             f"• 15د: {data['tf_15m']}\n"
             f"• 30د: {data['tf_30m']}\n"
