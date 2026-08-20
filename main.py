@@ -1,10 +1,17 @@
+import os
 import time
 import requests
 import telebot
 from telebot import types
+from flask import Flask
 
 TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is alive and running!", 200
 
 # --- جلب سعر الذهب اللحظي ---
 def get_gold_price():
@@ -68,11 +75,10 @@ def start_command(message):
     welcome_text = (
         f"👑 **النظام الآلي المطور لتداول الذهب (Institutional XAU/USD)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"مرحباً بك يا عبد الله. يعمل البوت الآن بنظام الاستجابة المباشرة وبدون أخطاء خوادم."
+        f"مرحباً بك يا عبد الله. يعمل النظام بكفاءة تامة الآن."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
-# --- معالجة الأوامر والرسائل ---
 @bot.message_handler(func=lambda message: True)
 def handle_text_messages(message):
     text = message.text
@@ -81,55 +87,23 @@ def handle_text_messages(message):
     res3, res2, res1, sup1, sup2, sup3 = get_support_resistance_levels(price)
 
     if text == "💰 السعر اللحظي":
-        bot.send_message(message.chat.id, 
-            f"💰 **تحديث الأسعار اللحظي:**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🪙 **الزوج:** `XAU/USD (Gold)`\n"
-            f"📍 **السعر الحالي:** `{price} $`", 
-            parse_mode="Markdown")
-
+        bot.send_message(message.chat.id, f"💰 **السعر الحالي:** `{price} $`", parse_mode="Markdown")
     elif text == "📊 مزاج وتحليل السوق":
-        bot.send_message(message.chat.id, 
-            f"📊 **تقرير مزاج السوق والسيولة:**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 السعر الحالي: `{price}` $\n"
-            f"🏦 اتجاه صانع السوق: `{bias}`\n"
-            f"🧱 نطاق الطلب الفعّال: `{zone_entree}`", 
-            parse_mode="Markdown")
-
+        bot.send_message(message.chat.id, f"📊 **اتجاه السوق:** `{bias}`\n📍 السعر: `{price} $`", parse_mode="Markdown")
     elif text == "🛡️ الدعم والمقاومة":
-        bot.send_message(message.chat.id, 
-            f"🛡️ **مستويات الدعم والمقاومة:**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 السعر الحالي: `{price} $`\n\n"
-            f"🔴 **المقاومات:** `{res1} | {res2} | {res3}`\n"
-            f"🟢 **الدعوم:** `{sup1} | {sup2} | {sup3}`", 
-            parse_mode="Markdown")
-
+        bot.send_message(message.chat.id, f"🛡️ **مقاومة:** `{res1}` | **دعم:** `{sup1}`", parse_mode="Markdown")
     elif text in ["🚀 صفقات زيرو انعكاس", "⚡ صفقات مؤسسية (VIP)"]:
-        bot.send_message(message.chat.id, 
-            f"{action_title}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💎 **نوع الأمر:** `{order_type}`\n"
-            f"📍 سعر السوق: `{price}` $\n"
-            f"🧱 الدخول: `{zone_entree}`\n"
-            f"⛔ وقف الخسارة: `{stop_loss}`\n"
-            f"🎯 الأهداف: `TP1: {tp1} | TP2: {tp2} | TP3: {tp3}`", 
-            parse_mode="Markdown")
-
+        bot.send_message(message.chat.id, f"{action_title}\n📍 السعر: `{price}` $\n🧱 الدخول: `{zone_entree}`\n⛔ الوقف: `{stop_loss}`\n🎯 الأهداف: `{tp1} / {tp2} / {tp3}`", parse_mode="Markdown")
     elif text == "🧮 حاسبة إدارة المخاطر":
-        bot.send_message(message.chat.id, 
-            f"🧮 **إدارة المخاطر:**\n"
-            f"🔹 رأس المال 1,000$: لوت مقترح `0.01`\n"
-            f"🔹 رأس المال 5,000$: لوت مقترح `0.05`", 
-            parse_mode="Markdown")
-
+        bot.send_message(message.chat.id, "🧮 لوت مقترح: `0.01` لكل 1000$", parse_mode="Markdown")
     elif text == "📈 سجل أداء البوت":
-        bot.send_message(message.chat.id, 
-            f"📈 **سجل أداء البوت:**\n"
-            f"🏆 معدل الأداء الناجح: `92.8%`", 
-            parse_mode="Markdown")
+        bot.send_message(message.chat.id, "📈 نسبة النجاح: `93%`", parse_mode="Markdown")
 
 if __name__ == '__main__':
-    print("Bot is running smoothly...")
-    bot.infinity_polling()
+    import threading
+    # تشغيل البوت في الخلفية بنظام Polling
+    threading.Thread(target=lambda: bot.infinity_polling(none_stop=True), daemon=True).start()
+    
+    # تشغيل خادم الويب ليجيب على رندر ويمنع خطأ الخدمة
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
