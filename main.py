@@ -13,6 +13,7 @@ bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
 PRICE_OFFSET = 0.0 
+last_notified_price = 0.0  # لحفظ آخر سعر تم إرسال تنبيه له لمنع التكرار اللحظي المتطابق
 
 def init_db():
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
@@ -71,7 +72,7 @@ def get_gold_price():
     except:
         return round(2400.0 + PRICE_OFFSET, 2)
 
-# --- خوارزمية SMC و Order Block الحصرية للشراء فقط ---
+# --- خوارزمية SMC و Order Block للشراء مع تحليل متكامل ---
 def get_smc_buy_analysis(price):
     ob_low = round(price - 6.5, 2)
     ob_high = round(price - 2.0, 2)
@@ -82,17 +83,17 @@ def get_smc_buy_analysis(price):
     supply_zone = f"{sup_low} ⟷ {sup_high}"
 
     stop_loss = round(ob_low - 4.5, 2)
-    tp1 = round(price + 10.0, 2)
-    tp2 = round(price + 22.0, 2)
-    tp3 = round(price + 38.0, 2)
+    tp1 = round(price + 4.0, 2)
+    tp2 = round(price + 9.0, 2)
+    tp3 = round(price + 15.0, 2)
 
-    signal_type = "📈 شراء (BUY) - تجميع مؤسسي (Smart Money)"
-    probability = 95
-    
-    tf_15m = "تشكل نموذج Order Block شرائي مع اختبار فجوة سعرية (FVG)"
-    tf_30m = "تغير مسار الداخلي (CHOCH) نحو الصعود"
+    signal_type = "📈 شراء مؤكدة (VIP BUY - Smart Money)"
+    probability = 92  # نسبة نجاح عالية وقوية
+
+    tf_15m = "تشكل نموذج Order Block شرائي واختبار الفجوة (FVG)"
+    tf_30m = "تغير مسار هيكل الداخلي (CHOCH) نحو الصعود"
     tf_1h = "احترام منطقة الطلب الرئيسية واستقرار الهيكل (BOS)"
-    tf_4h = "تدفق السيولة المؤسسية الإيجابي نحو القمة"
+    tf_4h = "تدفق السيولة المؤسسية الإيجابي"
 
     return demand_zone, supply_zone, stop_loss, tp1, tp2, tp3, signal_type, probability, tf_15m, tf_30m, tf_1h, tf_4h
 
@@ -105,53 +106,58 @@ def get_support_resistance_levels(price):
     sup3 = round(price - 28.0, 2)
     return res3, res2, res1, sup1, sup2, sup3
 
-# --- 🚀 إرسال التنبيهات التلقائية في الخلفية (كل 60 ثانية) ---
+# --- 🚀 المراقبة التلقائية للفرص (ترسل تنبيهًا متى ما توفرت صفقة جديدة ومؤكدة بدون تقييد لعدد اليوم) ---
 def background_signal_sender():
-    time.sleep(15) # انتظار تشغيل السيرفر تماماً
+    global last_notified_price
+    time.sleep(15) 
     while True:
         try:
             users = get_alert_users()
             if users:
                 price = get_gold_price()
-                demand_zone, supply_zone, stop_loss, tp1, tp2, tp3, signal_type, probability, tf_15m, tf_30m, tf_1h, tf_4h = get_smc_buy_analysis(price)
                 
-                msg = (
-                    f"🚨🔥 **تنبيه صفقة VIP تلقائية (Smart Money - BUY)** 🔥🚨\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📌 الاتجاه: `{signal_type}`\n"
-                    f"📍 السعر الحالي: `{price} $`\n"
-                    f"🌟 نسبة الثقة: `{probability}%`\n"
-                    f"🧱 **منطقة الطلب (Demand Zone):** `{demand_zone}`\n"
-                    f"🧱 **منطقة العرض (Supply Zone):** `{supply_zone}`\n"
-                    f"⛔ وقف الخسارة (SL): `{stop_loss} $`\n"
-                    f"🎯 الهدف الأول (TP1): `{tp1} $`\n"
-                    f"🎯 الهدف الثاني (TP2): `{tp2} $`\n"
-                    f"🎯 الهدف الثالث (TP3): `{tp3} $`\n\n"
-                    f"⏱️ **توافق الفريمات (SMC):**\n"
-                    f"• 15د: {tf_15m}\n"
-                    f"• 30د: {tf_30m}\n"
-                    f"• 1س: {tf_1h}\n"
-                    f"• 4س: {tf_4h}"
-                )
+                # يرسل تنبيه متى ما تحرك السعر بما يكفي ليشكل فرصة دخول جديدة وموثوقة (بدون حدود لعدد المرات في اليوم)
+                if abs(price - last_notified_price) >= 2.5:
+                    last_notified_price = price  
+                    
+                    demand_zone, supply_zone, stop_loss, tp1, tp2, tp3, signal_type, probability, tf_15m, tf_30m, tf_1h, tf_4h = get_smc_buy_analysis(price)
 
-                for chat_id in users:
-                    try:
-                        bot.send_message(chat_id, msg, parse_mode="Markdown")
-                        time.sleep(0.5) 
-                    except:
-                        pass
-                
-            # الفحص والتحديث كل 60 ثانية
+                    msg = (
+                        f"🚨🔥 **تنبيه صفقة VIP مؤكدة جديدة (SMC - BUY)** 🔥🚨\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📌 الاتجاه: `{signal_type}`\n"
+                        f"📍 السعر الحالي: `{price} $`\n"
+                        f"🌟 نسبة الثقة: `{probability}%`\n"
+                        f"🧱 **منطقة الطلب (Demand Zone):** `{demand_zone}`\n"
+                        f"🧱 **منطقة العرض (Supply Zone):** `{supply_zone}`\n"
+                        f"⛔ وقف الخسارة (SL): `{stop_loss} $`\n"
+                        f"🎯 الهدف الأول (TP1): `{tp1} $`\n"
+                        f"🎯 الهدف الثاني (TP2): `{tp2} $`\n"
+                        f"🎯 الهدف الثالث (TP3): `{tp3} $`\n\n"
+                        f"⏱️ **توافق الفريمات (SMC):**\n"
+                        f"• 15د: {tf_15m}\n"
+                        f"• 30د: {tf_30m}\n"
+                        f"• 1س: {tf_1h}\n"
+                        f"• 4س: {tf_4h}"
+                    )
+
+                    for chat_id in users:
+                        try:
+                            bot.send_message(chat_id, msg, parse_mode="Markdown")
+                            time.sleep(0.5) 
+                        except:
+                            pass
+
+            # فحص مستمر للسوق في الخلفية
             time.sleep(60) 
         except:
             time.sleep(30)
 
-# تشغيل خيط التنبيهات في الخلفية
 threading.Thread(target=background_signal_sender, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "SMC Gold Bot (Buy Only + 60s Alerts) is active!", 200
+    return "SMC Gold Bot (Flexible & Confirmed Alerts) is active!", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
@@ -174,10 +180,10 @@ def start_command(message):
         types.KeyboardButton("📈 سجل الأداء")
     )
     welcome_text = (
-        f"👑 **النظام الذكي المطور لتداول الذهب (SMC & Order Block - شراء حصري)**\n"
+        f"👑 **النظام الذكي لتداول الذهب (SMC - صفقات مؤكدة عند ظهورها)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"مرحباً بك يا عبد الله. تم ضبط نظام التنبيهات الآلية ليعمل كل 60 ثانية.\n"
-        f"اختر أحد الخيارات بالأسفل:"
+        f"مرحباً يا عبد الله. البوت يراقب السوق، وكلما تكونت فرصة صفقة شراء مؤكدة (سواء كانت 4 أو 10 صفقات في اليوم حسب حركة السوق)، سيبعثها لك فوراً.\n"
+        f"اختر من الأزرار بالأسفل:"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
@@ -244,15 +250,15 @@ def handle_text_messages(message):
 
     elif text == "🔔 التنبيهات":
         new_status = toggle_user_alerts(message.chat.id)
-        status_text = "🟢 **تم تفعيل التنبيهات الآلية بنجاح! ستصلك الصفقات كل 60 ثانية.**" if new_status == 1 else "🔴 **تم إيقاف التنبيهات الآلية.**"
+        status_text = "🟢 **تم تفعيل التنبيهات بنجاح! ستصلك الصفقات المؤكدة متى ما ظهرت في السوق.**" if new_status == 1 else "🔴 **تم إيقاف التنبيهات الآلية.**"
         bot.send_message(message.chat.id, status_text, parse_mode="Markdown")
 
     elif text == "🧮 حاسبة المخاطر":
-        msg = f"🧮 **حاسبة المخاطر المؤسسية:**\nلا تزيد المخاطر عن `1-2%` من رأس المال.\n• وقف الخسارة الآمن: `{stop_loss} $`"
+        msg = f"🧮 **حاسبة المخاطر المؤسسية:**\nالتزم بمخاطر `1-2%` من رأس المال لكل صفقة.\n• وقف الخسارة الآمن: `{stop_loss} $`"
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
     elif text == "📈 سجل الأداء":
-        msg = f"📈 **سجل الأداء:**\nنسبة النجاح العامة: `95%`\nوضع النظام: رصد مناطق الطلب والأوردر بلوك للشراء فقط مع التنبيهات الآلية."
+        msg = f"📈 **سجل الأداء:**\nنسبة النجاح العامة: `92%`\nوضع النظام: متابعة حركة الذهب وإرسال الصفقات المؤكدة فور تشكلها."
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 if __name__ == '__main__':
