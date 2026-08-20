@@ -24,7 +24,6 @@ def init_db():
 
 init_db()
 
-# --- وظائف البوت المساعدة ---
 def add_user(chat_id):
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -64,7 +63,6 @@ def get_gold_price():
     except:
         return 2400.0
 
-# --- منطق التحليل و التنبيهات ---
 def get_institutional_signal(price):
     is_buy = (price % 2 == 0)
     if is_buy:
@@ -97,12 +95,13 @@ def get_support_resistance_levels(price):
 
 # --- مراقبة السوق ---
 def background_market_monitor():
+    time.sleep(10) # انتظار حتى يقلع السيرفر تماماً
     while True:
         try:
             users = get_all_users()
             if users:
                 price = get_gold_price()
-                action_title, _, zone_entree, sl, tp1, tp2, tp3, _, _ = get_institutional_signal(price)
+                action_title, _, zone_entree, _, _, _, _, _, _ = get_institutional_signal(price)
                 for chat_id in users:
                     try:
                         bot.send_message(chat_id, f"🚨 **[Institutional Alert]**\n{action_title}\n📍 السعر: `{price}` $\n🧱 الدخول: `{zone_entree}`", parse_mode="Markdown")
@@ -113,10 +112,10 @@ def background_market_monitor():
 
 threading.Thread(target=background_market_monitor, daemon=True).start()
 
-# --- مسارات Flask ---
+# --- مسارات Flask الأساسية ---
 @app.route('/')
 def home():
-    return "Bot is active", 200
+    return "Bot is active and running!", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
@@ -125,28 +124,60 @@ def receive_message():
     bot.process_new_updates([update])
     return "!", 200
 
-# --- ضبط الويب هوك عند بدء التطبيق ---
-def setup_webhook():
-    external_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if external_url:
-        bot.remove_webhook()
-        time.sleep(1)
-        bot.set_webhook(url=f"{external_url}/{TOKEN}")
+@app.route('/tradingview_webhook', methods=['POST'])
+def tradingview_webhook():
+    try:
+        data = request.json
+        action = data.get('action', 'BUY')
+        price = data.get('price', get_gold_price())
+        setup_type = data.get('setup', 'Order Block M15')
 
-setup_webhook()
+        users = get_all_users()
+        if users:
+            for chat_id in users:
+                bot.send_message(
+                    chat_id,
+                    f"🔥 **[TradingView Live Signal]**\n"
+                    f"📢 **الاتجاه:** `{action} XAU/USD`\n"
+                    f"📊 **النموذج:** `{setup_type}`\n"
+                    f"📍 **سعر التفعيل:** `{price} $`",
+                    parse_mode="Markdown"
+                )
+        return "OK", 200
+    except Exception as e:
+        return str(e), 400
 
-# ---Handlers---
 @bot.message_handler(commands=['start'])
 def start_command(message):
     add_user(message.chat.id)
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("💰 السعر اللحظي", "📊 مزاج وتحليل السوق", "🛡️ الدعم والمقاومة", "⚡ صفقات مؤسسية (VIP)")
-    bot.send_message(message.chat.id, "مرحباً يا عبد الله، النظام يعمل.", reply_markup=markup)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(
+        types.KeyboardButton("💰 السعر اللحظي"),
+        types.KeyboardButton("📊 مزاج وتحليل السوق"),
+        types.KeyboardButton("🛡️ الدعم والمقاومة"),
+        types.KeyboardButton("⚡ صفقات مؤسسية (VIP)"),
+        types.KeyboardButton("🔔 تفعيل/إيقاف التنبيهات")
+    )
+    bot.send_message(message.chat.id, "مرحباً بك يا عبد الله، تم ربط النظام بنجاح.", parse_mode="Markdown", reply_markup=markup)
 
 @bot.message_handler(func=lambda message: True)
-def handle_messages(message):
-    # ... (باقي كود الـ Handlers كما هو)
-    bot.send_message(message.chat.id, "رسالتك وصلت يا عبد الله.")
+def handle_text_messages(message):
+    text = message.text
+    price = get_gold_price()
+    if text == "💰 السعر اللحظي":
+        bot.send_message(message.chat.id, f"📍 **السعر الحالي:** `{price} $`", parse_mode="Markdown")
+    else:
+        bot.send_message(message.chat.id, f"✅ تم استلام طلبك. السعر الحالي للذهب: `{price} $`", parse_mode="Markdown")
+
+# ضبط الويب هوك تلقائياً عند بدء التشغيل الفعلي
+with app.app_context():
+    external_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if external_url:
+        try:
+            bot.remove_webhook()
+            bot.set_webhook(url=f"{external_url}/{TOKEN}")
+        except:
+            pass
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
