@@ -5,15 +5,15 @@ import telebot
 import threading
 import time
 import datetime
+from flask import Flask, request
 from telebot import types
 
 TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
+app = Flask(__name__)
 
-# --- 🛠️ ضبط الفارق السعري ---
 PRICE_OFFSET = 0.0 
 
-# --- متغيرات حالة الصفقة ---
 active_signals = {
     "is_locked": False,
     "signal_type": None,
@@ -30,7 +30,6 @@ active_signals = {
     "last_alert_sent": False
 }
 
-# --- 1. إعداد قاعدة البيانات ---
 def init_db():
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -80,7 +79,6 @@ def get_alert_users():
     conn.close()
     return users
 
-# --- جلب سعر الذهب ---
 def get_gold_price():
     try:
         response = requests.get("https://api.gold-api.com/price/XAU", timeout=5)
@@ -98,6 +96,18 @@ def get_dynamic_institutional_levels(price):
 
 def get_support_resistance_levels(price):
     return round(price+25, 2), round(price+15, 2), round(price+7, 2), round(price-7, 2), round(price-15, 2), round(price-28, 2)
+
+# --- مسار فحص الحيوية لإرضاء بورت Render ---
+@app.route('/')
+def home():
+    return "Bot is active and running!", 200
+
+@app.route(f'/{TOKEN}', methods=['POST'])
+def receive_message():
+    json_str = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "!", 200
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -180,10 +190,12 @@ def handle_text_messages(message):
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 if __name__ == '__main__':
-    # مسح الويب هوك تلقائياً لمنع أي تعارض تشغيل
-    try:
-        requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
-    except:
-        pass
-    print("Bot started successfully with Polling mode...")
-    bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    # ربط الويب هوك بشكل صحيح مع رابط Render الخارجي تلقائياً
+    external_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if external_url:
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=f"{external_url}/{TOKEN}")
+    
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
