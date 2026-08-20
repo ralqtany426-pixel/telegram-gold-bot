@@ -1,4 +1,4 @@
-Import os
+import os
 import sqlite3
 import requests
 import telebot
@@ -13,7 +13,6 @@ bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
 # --- 🛠️ ضبط الفارق السعري (Offset) ---
-# قم بتعديل هذا الرقم ليطابق سعر الميتاتريدر بدقة (مثلاً 0.0 أو إضافة قيمة موجبة/سالبة)
 PRICE_OFFSET = 0.0 
 
 # --- متغيرات لتثبيت حالة الصفقة لكل فريم ومنع التكرار العشوائي ---
@@ -248,32 +247,34 @@ def receive_message():
     bot.process_new_updates([update])
     return "!", 200
 
+# --- أمر البدء مع أزرار ثابتة تعمل باللمس مباشرة ---
 @bot.message_handler(commands=['start'])
 def start_command(message):
     add_user(message.chat.id)
-    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
-        types.InlineKeyboardButton("💰 السعر اللحظي", callback_data="get_price"),
-        types.InlineKeyboardButton("📊 تحليل الفريمات المتعددة", callback_data="market_mood"),
-        types.InlineKeyboardButton("🛡️ الدعم والمقاومة", callback_data="support_resistance"),
-        types.InlineKeyboardButton("🚀 صفقات العرض والطلب (VIP)", callback_data="pro_signals"),
-        types.InlineKeyboardButton("🔔 تفعيل/إيقاف التنبيهات", callback_data="toggle_alerts"),
-        types.InlineKeyboardButton("🧮 حاسبة إدارة المخاطر", callback_data="risk_calc"),
-        types.InlineKeyboardButton("📈 سجل الأداء", callback_data="track_record")
+        types.KeyboardButton("💰 السعر اللحظي"),
+        types.KeyboardButton("📊 تحليل الفريمات المتعددة"),
+        types.KeyboardButton("🛡️ الدعم والمقاومة"),
+        types.KeyboardButton("🚀 صفقات VIP"),
+        types.KeyboardButton("🔔 التنبيهات"),
+        types.KeyboardButton("🧮 حاسبة المخاطر"),
+        types.KeyboardButton("📈 سجل الأداء")
     )
-    bot.send_message(message.chat.id, "👑 **النظام الذكي المطور لتداول الذهب (مع تنبيهات الأخبار)**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 **النظام الذكي المطور لتداول الذهب**\nاختر أحد الخيارات بالأسفل:", parse_mode="Markdown", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: True)
-def callback(call):
+# --- معالج نصوص الأزرار الثابتة لضمان الاستجابة الفورية ---
+@bot.message_handler(func=lambda message: True)
+def handle_text_messages(message):
+    text = message.text
     price = get_gold_price()
     zone_entree, stop_loss, tp1, tp2, tp3, signal_type, probability, tf_15m, tf_30m, tf_1h, tf_4h = get_dynamic_institutional_levels(price)
     r3, r2, r1, s1, s2, s3 = get_support_resistance_levels(price)
 
-    if call.data == "get_price":
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, f"💰 **سعر الذهب اللحظي:**\n`{price} $`", parse_mode="Markdown")
+    if text == "💰 السعر اللحظي":
+        bot.send_message(message.chat.id, f"💰 **سعر الذهب اللحظي:**\n`{price} $`", parse_mode="Markdown")
 
-    elif call.data == "market_mood":
+    elif text == "📊 تحليل الفريمات المتعددة":
         msg = (
             f"📊 **تحليل الفريمات المتعددة ومناطق التجميع:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -286,10 +287,9 @@ def callback(call):
             f"• 1س: `{tf_1h}`\n"
             f"• 4س: `{tf_4h}`"
         )
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-    elif call.data == "support_resistance":
+    elif text == "🛡️ الدعم والمقاومة":
         msg = (
             f"🛡️ **مستويات الدعم والمقاومة المؤسسية:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -301,10 +301,9 @@ def callback(call):
             f"🟢 دعم 2: `{s2} $`\n"
             f"🟢 دعم 3: `{s3} $`"
         )
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-    elif call.data == "pro_signals" or call.data == "zero_draw":
+    elif text == "🚀 صفقات VIP":
         msg = (
             f"🚀 **الصفقة الحية المرصودة (لكافة الفريمات):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -315,24 +314,23 @@ def callback(call):
             f"⛔ وقف الخسارة: `{stop_loss} $`\n"
             f"🎯 الأهداف: `{tp1} / {tp2} / {tp3} $`"
         )
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-    elif call.data == "toggle_alerts":
-        new_status = toggle_user_alerts(call.message.chat.id)
+    elif text == "🔔 التنبيهات":
+        new_status = toggle_user_alerts(message.chat.id)
         status_text = "🟢 **تم تفعيل التنبيهات الشاملة بنجاح!**" if new_status == 1 else "🔴 **تم إيقاف التنبيهات.**"
-        bot.answer_callback_query(call.id, text="تم التحديث!")
-        bot.send_message(call.message.chat.id, status_text, parse_mode="Markdown")
+        bot.send_message(message.chat.id, status_text, parse_mode="Markdown")
 
-    elif call.data == "risk_calc":
+    elif text == "🧮 حاسبة المخاطر":
         msg = f"🧮 **حاسبة المخاطر:**\nلا تزيد المخاطر عن `1-2%` من رأس المال.\n• وقف الخسارة: `{stop_loss} $`"
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-    elif call.data == "track_record":
+    elif text == "📈 سجل الأداء":
         msg = f"📈 **سجل الأداء:**\nنسبة النجاح العامة: `90%`\nوضع النظام: رصد حي ومباشر لكافة الفريمات."
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 if __name__ == '__main__':
+    WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL") + "/" + TOKEN
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL)
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
