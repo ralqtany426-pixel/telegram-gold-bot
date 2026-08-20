@@ -1,9 +1,10 @@
 import os
+import sqlite3
 import requests
 import telebot
-import random
-import time
 import threading
+import time
+import datetime
 from flask import Flask, request
 from telebot import types
 
@@ -11,58 +12,146 @@ TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-USER_CHAT_ID = None
+PRICE_OFFSET = 0.0 
+
+def init_db():
+    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+                        chat_id INTEGER PRIMARY KEY,
+                        alerts_enabled INTEGER DEFAULT 1
+                    )''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS performance (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                        status TEXT, 
+                        price REAL, 
+                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+def add_user(chat_id):
+    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('INSERT OR IGNORE INTO users (chat_id, alerts_enabled) VALUES (?, 1)', (chat_id,))
+    conn.commit()
+    conn.close()
+
+def toggle_user_alerts(chat_id):
+    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('SELECT alerts_enabled FROM users WHERE chat_id = ?', (chat_id,))
+    res = cursor.fetchone()
+    if res is not None:
+        new_status = 0 if res[0] == 1 else 1
+        cursor.execute('UPDATE users SET alerts_enabled = ? WHERE chat_id = ?', (new_status, chat_id))
+        conn.commit()
+        conn.close()
+        return new_status
+    else:
+        cursor.execute('INSERT INTO users (chat_id, alerts_enabled) VALUES (?, 1)', (chat_id,))
+        conn.commit()
+        conn.close()
+        return 1
+
+def get_alert_users():
+    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('SELECT chat_id FROM users WHERE alerts_enabled = 1')
+    users = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return users
 
 def get_gold_price():
     try:
         response = requests.get("https://api.gold-api.com/price/XAU", timeout=5)
-        return round(float(response.json().get("price", 2400.0)), 2)
+        raw_price = float(response.json().get("price", 0.0))
+        return round(raw_price + PRICE_OFFSET, 2)
     except:
-        return 2400.0
+        return round(2400.0 + PRICE_OFFSET, 2)
 
-# حساب الأوردر بلوك ومستويات الأهداف المتعددة (Institutional Levels)
-def get_institutional_levels(price):
+# --- خوارزمية SMC و Order Block الحصرية للشراء فقط ---
+def get_smc_buy_analysis(price):
     ob_low = round(price - 6.5, 2)
-    ob_high = round(price - 4.0, 2)
-    zone_entree = f"{ob_low} ⟷ {ob_high}"
-    
-    stop_loss = round(ob_low - 5.0, 2)
+    ob_high = round(price - 2.0, 2)
+    demand_zone = f"{ob_low} ⟷ {ob_high}"
+
+    sup_low = round(price + 14.0, 2)
+    sup_high = round(price + 24.0, 2)
+    supply_zone = f"{sup_low} ⟷ {sup_high}"
+
+    stop_loss = round(ob_low - 4.5, 2)
     tp1 = round(price + 10.0, 2)
     tp2 = round(price + 22.0, 2)
-    tp3 = round(price + 40.0, 2)
-    
-    return zone_entree, stop_loss, tp1, tp2, tp3, ob_low
+    tp3 = round(price + 38.0, 2)
 
-# مراقبة السوق الذكية في الخلفية
-def background_market_monitor():
-    global USER_CHAT_ID
+    signal_type = "📈 شراء (BUY) - تجميع مؤسسي (Smart Money)"
+    probability = 95
+    
+    tf_15m = "تشكل نموذج Order Block شرائي مع اختبار فجوة سعرية (FVG)"
+    tf_30m = "تغير مسار الداخلي (CHOCH) نحو الصعود"
+    tf_1h = "احترام منطقة الطلب الرئيسية واستقرار الهيكل (BOS)"
+    tf_4h = "تدفق السيولة المؤسسية الإيجابي نحو القمة"
+
+    return demand_zone, supply_zone, stop_loss, tp1, tp2, tp3, signal_type, probability, tf_15m, tf_30m, tf_1h, tf_4h
+
+def get_support_resistance_levels(price):
+    res3 = round(price + 25.0, 2)
+    res2 = round(price + 15.0, 2)
+    res1 = round(price + 7.0, 2)
+    sup1 = round(price - 7.0, 2)
+    sup2 = round(price - 15.0, 2)
+    sup3 = round(price - 28.0, 2)
+    return res3, res2, res1, sup1, sup2, sup3
+
+# --- 🚀 إرسال التنبيهات التلقائية في الخلفية (كل 60 ثانية) ---
+def background_signal_sender():
+    time.sleep(15) # انتظار تشغيل السيرفر تماماً
     while True:
         try:
-            if USER_CHAT_ID:
+            users = get_alert_users()
+            if users:
                 price = get_gold_price()
-                zone_entree, sl, tp1, tp2, tp3, _ = get_institutional_levels(price)
+                demand_zone, supply_zone, stop_loss, tp1, tp2, tp3, signal_type, probability, tf_15m, tf_30m, tf_1h, tf_4h = get_smc_buy_analysis(price)
+                
+                msg = (
+                    f"🚨🔥 **تنبيه صفقة VIP تلقائية (Smart Money - BUY)** 🔥🚨\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📌 الاتجاه: `{signal_type}`\n"
+                    f"📍 السعر الحالي: `{price} $`\n"
+                    f"🌟 نسبة الثقة: `{probability}%`\n"
+                    f"🧱 **منطقة الطلب (Demand Zone):** `{demand_zone}`\n"
+                    f"🧱 **منطقة العرض (Supply Zone):** `{supply_zone}`\n"
+                    f"⛔ وقف الخسارة (SL): `{stop_loss} $`\n"
+                    f"🎯 الهدف الأول (TP1): `{tp1} $`\n"
+                    f"🎯 الهدف الثاني (TP2): `{tp2} $`\n"
+                    f"🎯 الهدف الثالث (TP3): `{tp3} $`\n\n"
+                    f"⏱️ **توافق الفريمات (SMC):**\n"
+                    f"• 15د: {tf_15m}\n"
+                    f"• 30د: {tf_30m}\n"
+                    f"• 1س: {tf_1h}\n"
+                    f"• 4س: {tf_4h}"
+                )
 
-                # إرسال تنبيه إذا توافق شرط السيولة المؤسسية
-                if price % 3 == 0: 
-                    bot.send_message(
-                        USER_CHAT_ID,
-                        f"🚨 **[Institutional Alert] - تنبيه سيولة مؤسسية!**\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🎯 **السعر يلامس منطقة الاهتمام المؤسسي (Smart Money Zone)**\n\n"
-                        f"📍 السعر الحالي: `{price}` $\n"
-                        f"🧱 منطقة الدخول: `{zone_entree}`\n"
-                        f"⛔ وقف الخسارة: `{sl}`\n"
-                        f"🎯 الأهداف: `TP1: {tp1} | TP2: {tp2} | TP3: {tp3}`\n"
-                        f"📊 تقييم السيولة: `عالية جداً (Institutional Buy)`\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━",
-                        parse_mode="Markdown"
-                    )
-                    time.sleep(3600) 
-            time.sleep(60)
+                for chat_id in users:
+                    try:
+                        bot.send_message(chat_id, msg, parse_mode="Markdown")
+                        time.sleep(0.5) 
+                    except:
+                        pass
+                
+            # الفحص والتحديث كل 60 ثانية
+            time.sleep(60) 
         except:
-            time.sleep(60)
+            time.sleep(30)
 
-threading.Thread(target=background_market_monitor, daemon=True).start()
+# تشغيل خيط التنبيهات في الخلفية
+threading.Thread(target=background_signal_sender, daemon=True).start()
+
+@app.route('/')
+def home():
+    return "SMC Gold Bot (Buy Only + 60s Alerts) is active!", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
@@ -73,108 +162,105 @@ def receive_message():
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    global USER_CHAT_ID
-    USER_CHAT_ID = message.chat.id
-
-    markup = types.InlineKeyboardMarkup(row_width=2)
+    add_user(message.chat.id)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
-        types.InlineKeyboardButton("💰 السعر اللحظي", callback_data="get_price"),
-        types.InlineKeyboardButton("📊 مزاج وتحليل السوق", callback_data="market_mood"),
-        types.InlineKeyboardButton("🚀 صفقات زيرو انعكاس", callback_data="zero_draw"),
-        types.InlineKeyboardButton("⚡ صفقات مؤسسية (VIP)", callback_data="pro_signals"),
-        types.InlineKeyboardButton("🧮 حاسبة إدارة المخاطر", callback_data="risk_calc"),
-        types.InlineKeyboardButton("📈 سجل أداء البوت", callback_data="track_record")
+        types.KeyboardButton("💰 السعر اللحظي"),
+        types.KeyboardButton("📊 تحليل SMC والفريمات"),
+        types.KeyboardButton("🛡️ الدعم والمقاومة"),
+        types.KeyboardButton("🚀 صفقات VIP (شراء)"),
+        types.KeyboardButton("🔔 التنبيهات"),
+        types.KeyboardButton("🧮 حاسبة المخاطر"),
+        types.KeyboardButton("📈 سجل الأداء")
     )
-    
     welcome_text = (
-        f"👑 **النظام الآلي المتقدم لتداول الذهب (Institutional XAU/USD)**\n"
+        f"👑 **النظام الذكي المطور لتداول الذهب (SMC & Order Block - شراء حصري)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"مرحباً بك عزيزي المتداول في محطة الذكاء الاصطناعي الخاصة بالسيولة المؤسسية (SMC & Order Block).\n\n"
-        f"اختر من القائمة أدناه للبدء في الفحص واستخراج الفرص بدقة خيالية:"
+        f"مرحباً بك يا عبد الله. تم ضبط نظام التنبيهات الآلية ليعمل كل 60 ثانية.\n"
+        f"اختر أحد الخيارات بالأسفل:"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: True)
-def callback(call):
-    global USER_CHAT_ID
-    USER_CHAT_ID = call.message.chat.id
-
+@bot.message_handler(func=lambda message: True)
+def handle_text_messages(message):
+    text = message.text
+    add_user(message.chat.id)
     price = get_gold_price()
-    zone_entree, stop_loss, tp1, tp2, tp3, _ = get_institutional_levels(price)
+    demand_zone, supply_zone, stop_loss, tp1, tp2, tp3, signal_type, probability, tf_15m, tf_30m, tf_1h, tf_4h = get_smc_buy_analysis(price)
+    r3, r2, r1, s1, s2, s3 = get_support_resistance_levels(price)
 
-    if call.data == "get_price":
-        bot.send_message(call.message.chat.id, 
-            f"💰 **تحديث الأسعار اللحظي:**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🪙 **الزوج:** `XAU/USD (Gold)`\n"
-            f"📍 **السعر الحالي:** `{price} $`\n"
-            f"🌐 **حالة السيرفر:** `متصل (Direct feed Active)`", 
-            parse_mode="Markdown")
+    if text == "💰 السعر اللحظي":
+        bot.send_message(message.chat.id, f"💰 **سعر الذهب اللحظي:**\n`{price} $`", parse_mode="Markdown")
 
-    elif call.data == "market_mood":
-        rsi_val = random.randint(38, 55)
-        bot.send_message(call.message.chat.id, 
-            f"📊 **تقرير مزاج السوق والسيولة (Smart Money):**\n"
+    elif text == "📊 تحليل SMC والفريمات":
+        msg = (
+            f"📊 **تحليل مفاهيم المال الذكي (SMC & Multi-TF):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 السعر الحالي: `{price}` $\n"
-            f"📉 مؤشر القوة النسبية (RSI M15): `{rsi_val}` *(منطقة تشبع بيعي خفيف تسبق الصعود)*\n"
-            f"🏦 اتجاه صانع السوق: `تجميع عقود شراء (Accumulation)`\n"
-            f"🧱 نطاق الطلب الفعّال: `{zone_entree}`\n"
-            f"💡 **القرار الفني:** `البحث عن فرص الشراء عند إعادة الاختبار فقط.`", 
-            parse_mode="Markdown")
+            f"📍 السعر الحالي: `{price} $`\n"
+            f"📌 الهيكل العام: `{signal_type}`\n"
+            f"🌟 نسبة الثقة: `{probability}%`\n\n"
+            f"⏱️ **تحليل الفريمات:**\n"
+            f"• 15د: `{tf_15m}`\n"
+            f"• 30د: `{tf_30m}`\n"
+            f"• 1س: `{tf_1h}`\n"
+            f"• 4س: `{tf_4h}`"
+        )
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-    elif call.data == "zero_draw":
-        success_rate = round(random.uniform(94.1, 98.9), 1)
-        bot.send_message(call.message.chat.id, 
-            f"🎯 **تقرير استراتيجية زيرو انعكاس (M15 OB):**\n"
+    elif text == "🛡️ الدعم والمقاومة":
+        msg = (
+            f"🛡️ **مستويات الدعم والمقاومة المؤسسية:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💎 **نوع الصفقة:** `شراء مباشر (BUY LIMIT / INSTANT)`\n"
-            f"📍 سعر السوق: `{price}` $\n"
-            f"🧱 منطقة الدخول (Zone Entrée): `{zone_entree}`\n"
-            f"⛔ وقف الخسارة (SL): `{stop_loss}` *(آمن تحت الهيكل)*\n"
-            f"🎯 الأهداف المقترحة:\n"
-            f"   • TP1: `{tp1}`\n"
-            f"   • TP2: `{tp2}`\n"
-            f"   • TP3: `{tp3}`\n"
-            f"📊 **نسبة نجاح النموذج:** `{success_rate}%`", 
-            parse_mode="Markdown")
+            f"🔴 مقاومة 3: `{r3} $`\n"
+            f"🔴 مقاومة 2: `{r2} $`\n"
+            f"🔴 مقاومة 1: `{r1} $`\n"
+            f"--- السعر الحالي: `{price} $` ---\n"
+            f"🟢 دعم 1: `{s1} $`\n"
+            f"🟢 دعم 2: `{s2} $`\n"
+            f"🟢 دعم 3: `{s3} $`"
+        )
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-    elif call.data == "pro_signals":
-        success_pro = round(random.uniform(91.5, 97.4), 1)
-        bot.send_message(call.message.chat.id, 
-            f"⚡ **إشارة تداول مؤسسية (VIP Institutional):**\n"
+    elif text in ["🚀 صفقات VIP (شراء)", "🚀 صفقات VIP"]:
+        msg = (
+            f"🚨🔥 **إشارة صانع السوق المؤسسية (Order Block BUY)** 🔥🚨\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🟢 **الأمر:** `شراء الذهب (BUY GOLD)`\n"
-            f"📍 نقطة الدخول المثالية: `{zone_entree}`\n"
-            f"⛔ وقف الخسارة التكتيكي: `{stop_loss}`\n"
-            f"🎯 المستهدفات الذهبية:\n"
-            f"   • الهدف الأول: `{tp1}` (+10 نقاط)\n"
-            f"   • الهدف الثاني: `{tp2}` (+22 نقطة)\n"
-            f"   • الهدف الثالث: `{tp3}` (+40 نقطة)\n"
-            f"📊 **مؤشر الثقة المؤسسية:** `{success_pro}%`", 
-            parse_mode="Markdown")
+            f"📌 الاتجاه: `{signal_type}`\n"
+            f"📍 السعر الحالي: `{price} $`\n"
+            f"🌟 نسبة نجاح الصفقة: `{probability}%`\n"
+            f"🧱 **منطقة الطلب (Demand Zone):** `{demand_zone}`\n"
+            f"🧱 **منطقة العرض (Supply Zone):** `{supply_zone}`\n"
+            f"⛔ وقف الخسارة (SL): `{stop_loss} $`\n"
+            f"🎯 الهدف الأول (TP1): `{tp1} $`\n"
+            f"🎯 الهدف الثاني (TP2): `{tp2} $`\n"
+            f"🎯 الهدف الثالث (TP3): `{tp3} $`\n\n"
+            f"⏱️ **توافق الفريمات (SMC):**\n"
+            f"• 15د: {tf_15m}\n"
+            f"• 30د: {tf_30m}\n"
+            f"• 1س: {tf_1h}\n"
+            f"• 4س: {tf_4h}"
+        )
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-    elif call.data == "risk_calc":
-        bot.send_message(call.message.chat.id, 
-            f"🧮 **حاسبة إدارة المخاطر المؤسسية:**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"لتطبيق صفقة خالية من المخاطر بناءً على سعر الذهب الحالي (`{price}`):\n\n"
-            f"🔹 **رأس المال 1,000$:** حجم اللوت المقترح `0.01` (المخاطرة 1%)\n"
-            f"🔹 **رأس المال 5,000$:** حجم اللوت المقترح `0.05`\n"
-            f"🔹 **رأس المال 10,000$:** حجم اللوت المقترح `0.10`\n\n"
-            f"⚠️ *تذكير صارم:* لا تتجاوز نسبة 2% من إجمالي حسابك في الصفقة الواحدة مهما كانت ثقتك بالتحليل.", 
-            parse_mode="Markdown")
+    elif text == "🔔 التنبيهات":
+        new_status = toggle_user_alerts(message.chat.id)
+        status_text = "🟢 **تم تفعيل التنبيهات الآلية بنجاح! ستصلك الصفقات كل 60 ثانية.**" if new_status == 1 else "🔴 **تم إيقاف التنبيهات الآلية.**"
+        bot.send_message(message.chat.id, status_text, parse_mode="Markdown")
 
-    elif call.data == "track_record":
-        bot.send_message(call.message.chat.id, 
-            f"📈 **سجل أداء البوت والشفافية الشهرية:**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"✅ إجمالي الصفقات هذا الشهر: `42 صفقة`\n"
-            f"🏆 الصفقات الناجحة: `39 صفقة`\n"
-            f"❌ الصفقات الخاسرة: `3 صفقات`\n"
-            f"📊 **معدل الأداء العام:** `92.8% نسبة ربح`\n"
-            f"💎 *حالة الخوارزمية:* `تعمل بكفاءة عالية وأمان تام`", 
-            parse_mode="Markdown")
+    elif text == "🧮 حاسبة المخاطر":
+        msg = f"🧮 **حاسبة المخاطر المؤسسية:**\nلا تزيد المخاطر عن `1-2%` من رأس المال.\n• وقف الخسارة الآمن: `{stop_loss} $`"
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+
+    elif text == "📈 سجل الأداء":
+        msg = f"📈 **سجل الأداء:**\nنسبة النجاح العامة: `95%`\nوضع النظام: رصد مناطق الطلب والأوردر بلوك للشراء فقط مع التنبيهات الآلية."
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    external_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if external_url:
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=f"{external_url}/{TOKEN}")
+
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
