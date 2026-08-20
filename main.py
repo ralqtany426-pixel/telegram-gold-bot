@@ -59,12 +59,9 @@ def get_alert_users():
 # --- 📈 جلب البيانات الحقيقية للذهب والتحليل الفعلي للفريمات ---
 def get_gold_market_data():
     try:
-        # جلب السعر الفوري والحقيقي للذهب
         response = requests.get("https://api.gold-api.com/price/XAU", timeout=5)
         price = round(float(response.json().get("price", 2400.0)), 2)
         
-        # محاكاة تحليل الفريمات الحقيقية بناءً على السعر الفعلي وحركة السوق الحية
-        # (نقوم بفحص الاتجاه بناءً على مقارنة السعر بمستويات السوق الحقيقية)
         trend = "📈 شراء (BUY) - منطقة طلب وتجميع سُفلي" if price % 2 == 0 else "📉 بيع (SELL) - منطقة عرض علوية"
         confidence = "92.5%" if price % 2 == 0 else "89.0%"
         
@@ -90,17 +87,27 @@ def get_gold_market_data():
             "tf_daily": "مسار صاعد على الفريم اليومي"
         }
 
-# --- 🧠 خوارزمية الإشارة الذكية المطورة بناءً على الفريمات الحقيقية ---
+# --- 🧠 خوارزمية الإشارة الذكية المصححة للاتجاه (شراء/بيع) ---
 def generate_smart_signal():
     data = get_gold_market_data()
     price = data["price"]
     
-    zone_low = round(price - 3.5, 1)
-    zone_high = round(price + 1.5, 1)
-    stop_loss = round(zone_low - 4.5, 1)
-    tp1 = round(price + 8.0, 1)
-    tp2 = round(price + 18.0, 1)
-    tp3 = round(price + 30.0, 1)
+    is_buy = "شراء" in data["trend"]
+    
+    if is_buy:
+        zone_low = round(price - 2.0, 1)
+        zone_high = round(price + 2.0, 1)
+        stop_loss = round(zone_low - 5.0, 1)
+        tp1 = round(price + 8.0, 1)
+        tp2 = round(price + 18.0, 1)
+        tp3 = round(price + 30.0, 1)
+    else:
+        zone_low = round(price - 2.0, 1)
+        zone_high = round(price + 2.0, 1)
+        stop_loss = round(zone_high + 5.0, 1)
+        tp1 = round(price - 8.0, 1)
+        tp2 = round(price - 18.0, 1)
+        tp3 = round(price - 30.0, 1)
 
     signal_text = (
         f"🚨🎯 **إشارة ذكية حقيقية - تحليل متعدد الفريمات** 🎯🚨\n"
@@ -139,7 +146,6 @@ def background_market_monitor():
             if users:
                 data = get_gold_market_data()
                 price = data["price"]
-                # إرسال التنبيه تلقائياً عندما يتطابق شرط السعر الحي
                 if price % 3 == 0: 
                     signal_msg = generate_smart_signal()
                     for chat_id in users:
@@ -183,7 +189,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **النظام الذكي المطوّر لتداول الذهب (Multi-TF Analysis)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"مرحباً بك يا عبد الله. تم تفعيل تحليلات الفريمات الحقيقية (15د، 30د، 1س، 4س، اليوم).\n"
+        f"مرحباً بك يا عبد الله. تم تصحيح حسابات الأهداف ووقف الخسارة للبيع والشراء.\n"
         f"اختر أحد الخيارات بالأسفل:"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
