@@ -180,7 +180,10 @@ def handle_text_messages(message):
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 if __name__ == '__main__':
-    # إزالة أي ويب هوك قديم لكي يعمل الـ Polling بدون تعارض
-    bot.remove_webhook()
+    # مسح الويب هوك تلقائياً لمنع أي تعارض تشغيل
+    try:
+        requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
+    except:
+        pass
     print("Bot started successfully with Polling mode...")
     bot.infinity_polling(timeout=60, long_polling_timeout=60)
