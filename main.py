@@ -48,12 +48,10 @@ def get_gold_price():
 
 # --- منطق التحليل واستخراج مناطق الطلب والعرض ---
 def get_institutional_levels(price):
-    # مناطق الطلب (Demand Zone) للشراء
     ob_low = round(price - 6.5, 2)
     ob_high = round(price - 4.0, 2)
     demand_zone = f"{ob_low} ⟷ {ob_high}"
 
-    # مناطق العرض (Supply Zone) العليا المستهدفة
     sup_low = round(price + 15.0, 2)
     sup_high = round(price + 22.0, 2)
     supply_zone = f"{sup_low} ⟷ {sup_high}"
@@ -121,7 +119,7 @@ def receive_message():
     bot.process_new_updates([update])
     return "!", 200
 
-# --- مسار TradingView Webhook المحدث ---
+# --- مسار TradingView Webhook ---
 @app.route('/tradingview_webhook', methods=['POST'])
 def tradingview_webhook():
     try:
@@ -168,10 +166,10 @@ def start_command(message):
     )
 
     welcome_text = (
-        f"👑 **النظام الآلي المطور لتداول الذهب (Institutional XAU/USD)**\n"
+        f"👑 **النظام الذكي المطور لتداول الذهب (Order Block & SMC)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"مرحباً بك مجدداً يا عبد الله. تم تحديث مناطق الطلب والعرض بنجاح.\n"
-        f"اختر من القائمة أدناه للبدء:"
+        f"مرحباً بك يا عبد الله. تم تفعيل خوارزميات الإشارات الذكية بنجاح.\n"
+        f"اختر أحد الخيارات بالأسفل:"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
