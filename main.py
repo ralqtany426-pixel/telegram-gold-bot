@@ -13,7 +13,7 @@ bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
 PRICE_OFFSET = 0.0 
-last_notified_price = 0.0  # لحفظ آخر سعر تم إرسال تنبيه له لمنع التكرار اللحظي المتطابق
+last_notified_zone = 0.0  # لحفظ آخر نطاق أو شريحة سعرية تم إرسال تنبيه لها لمنع التكرار المزعج
 
 def init_db():
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
@@ -106,9 +106,9 @@ def get_support_resistance_levels(price):
     sup3 = round(price - 28.0, 2)
     return res3, res2, res1, sup1, sup2, sup3
 
-# --- 🚀 المراقبة التلقائية للفرص (ترسل تنبيهًا متى ما توفرت صفقة جديدة ومؤكدة بدون تقييد لعدد اليوم) ---
+# --- 🚀 المراقبة الذكية للفرص (ترسل تنبيهًا فقط عند تغير النطاق السعري بفرصة جديدة منعاً للإزعاج) ---
 def background_signal_sender():
-    global last_notified_price
+    global last_notified_zone
     time.sleep(15) 
     while True:
         try:
@@ -116,10 +116,13 @@ def background_signal_sender():
             if users:
                 price = get_gold_price()
                 
-                # يرسل تنبيه متى ما تحرك السعر بما يكفي ليشكل فرصة دخول جديدة وموثوقة (بدون حدود لعدد المرات في اليوم)
-                if abs(price - last_notified_price) >= 2.5:
-                    last_notified_price = price  
-                    
+                # حساب النطاق الحالي (يقسم السعر إلى شريحة كل 10 دولار لتجنب التكرار المتلاحق)
+                current_zone = int(price / 10)
+
+                # يرسل التنبيه فقط إذا دخل السعر في شريحة سعرية جديدة بالكامل (تغير حقيقي في الفرصة)
+                if current_zone != last_notified_zone:
+                    last_notified_zone = current_zone  
+
                     demand_zone, supply_zone, stop_loss, tp1, tp2, tp3, signal_type, probability, tf_15m, tf_30m, tf_1h, tf_4h = get_smc_buy_analysis(price)
 
                     msg = (
@@ -148,7 +151,7 @@ def background_signal_sender():
                         except:
                             pass
 
-            # فحص مستمر للسوق في الخلفية
+            # فحص مستمر للسوق في الخلفية كل دقيقة
             time.sleep(60) 
         except:
             time.sleep(30)
@@ -157,7 +160,7 @@ threading.Thread(target=background_signal_sender, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "SMC Gold Bot (Flexible & Confirmed Alerts) is active!", 200
+    return "SMC Gold Bot (Smart Zone Alerts) is active!", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
@@ -180,9 +183,9 @@ def start_command(message):
         types.KeyboardButton("📈 سجل الأداء")
     )
     welcome_text = (
-        f"👑 **النظام الذكي لتداول الذهب (SMC - صفقات مؤكدة عند ظهورها)**\n"
+        f"👑 **النظام الذكي لتداول الذهب (SMC - صفقات مؤكدة)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"مرحباً يا عبد الله. البوت يراقب السوق، وكلما تكونت فرصة صفقة شراء مؤكدة (سواء كانت 4 أو 10 صفقات في اليوم حسب حركة السوق)، سيبعثها لك فوراً.\n"
+        f"مرحباً يا عبد الله. البوت يراقب السوق بذكاء، وسيرسل لك التنبيهات حصرياً عندما تتشكل فرصة جديدة في نطاق سعري مختلف، بدون إزعاج أو تكرار.\n"
         f"اختر من الأزرار بالأسفل:"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
@@ -250,7 +253,7 @@ def handle_text_messages(message):
 
     elif text == "🔔 التنبيهات":
         new_status = toggle_user_alerts(message.chat.id)
-        status_text = "🟢 **تم تفعيل التنبيهات بنجاح! ستصلك الصفقات المؤكدة متى ما ظهرت في السوق.**" if new_status == 1 else "🔴 **تم إيقاف التنبيهات الآلية.**"
+        status_text = "🟢 **تم تفعيل التنبيهات بنجاح! ستصلك الصفقات المحدثة عند تحرك السوق لنطاق جديد.**" if new_status == 1 else "🔴 **تم إيقاف التنبيهات الآلية.**"
         bot.send_message(message.chat.id, status_text, parse_mode="Markdown")
 
     elif text == "🧮 حاسبة المخاطر":
@@ -258,7 +261,7 @@ def handle_text_messages(message):
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
     elif text == "📈 سجل الأداء":
-        msg = f"📈 **سجل الأداء:**\nنسبة النجاح العامة: `92%`\nوضع النظام: متابعة حركة الذهب وإرسال الصفقات المؤكدة فور تشكلها."
+        msg = f"📈 **سجل الأداء:**\nنسبة النجاح العامة: `92%`\nوضع النظام: المراقبة الذكية للنطاقات السعرية وإرسال الفرص فور توافرها."
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 if __name__ == '__main__':
