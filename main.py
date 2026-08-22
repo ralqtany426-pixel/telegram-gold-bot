@@ -79,9 +79,16 @@ def analyze_smc_setup(symbol):
 
     current_price = round(df_15m['Close'].iloc[-1], 4 if "EURUSD" in symbol else 2)
     main_trend = get_main_trend_200(symbol)
-    buffer = 0.0003 if "EURUSD" in symbol else (0.8 if "GC" in symbol else 15.0)
+    
+    # تحديد نطاق الـ Buffer تلقائياً حسب الأداة المالية
+    if "EURUSD" in symbol:
+        buffer = 0.0003
+    elif "BTC" in symbol:
+        buffer = 150.0
+    else:
+        buffer = 1.0
 
-    # 1. تحديد Swing Highs & Lows الدقيقة (إطار الساعتين/الساعة)
+    # 1. تحديد Swing Highs & Lows الدقيقة (إطار الساعة)
     df_1h['swing_high'] = (df_1h['High'] > df_1h['High'].shift(1)) & (df_1h['High'] > df_1h['High'].shift(2)) & \
                           (df_1h['High'] > df_1h['High'].shift(-1)) & (df_1h['High'] > df_1h['High'].shift(-2))
     df_1h['swing_low'] = (df_1h['Low'] < df_1h['Low'].shift(1)) & (df_1h['Low'] < df_1h['Low'].shift(2)) & \
@@ -95,9 +102,7 @@ def analyze_smc_setup(symbol):
     for i in range(len(df_1h)-3, 5, -1):
         if df_1h['swing_high'].iloc[i]:
             last_high = df_1h['High'].iloc[i]
-            # التأكد من وجود إغلاق شمعة أعلى القمة (BOS)
             if (df_1h['Close'].iloc[i+1:] > last_high).any():
-                # إيجاد آخر شمعة حمراء (Down Candle) قبل الشمعة المندفعة
                 ob_candidates = df_1h.iloc[i-5:i+1]
                 red_candles = ob_candidates[ob_candidates['Close'] < ob_candidates['Open']]
                 if not red_candles.empty:
@@ -110,9 +115,7 @@ def analyze_smc_setup(symbol):
     for i in range(len(df_1h)-3, 5, -1):
         if df_1h['swing_low'].iloc[i]:
             last_low = df_1h['Low'].iloc[i]
-            # التأكد من وجود إغلاق شمعة أسفل القاع (BOS)
             if (df_1h['Close'].iloc[i+1:] < last_low).any():
-                # إيجاد آخر شمعة خضراء (Up Candle) قبل الشمعة المندفعة
                 ob_candidates = df_1h.iloc[i-5:i+1]
                 green_candles = ob_candidates[ob_candidates['Close'] > ob_candidates['Open']]
                 if not green_candles.empty:
@@ -133,7 +136,7 @@ def analyze_smc_setup(symbol):
     has_fvg_buy = df_15m['Low'].iloc[-1] > df_15m['High'].iloc[-3]
     has_fvg_sell = df_15m['High'].iloc[-1] < df_15m['Low'].iloc[-3]
 
-    # 4. فلترة الإشارة (تطابق الاتجاه + لمس الـ OB مع الـ Buffer + وجود FVG)
+    # 4. فلترة الإشارة
     signal_type = "NONE"
     if ((demand_low - buffer) <= current_price <= (demand_high + buffer)) and has_fvg_buy and (main_trend == "BULLISH"):
         signal_type = "BUY"
@@ -163,20 +166,32 @@ def background_monitor():
                         price = analysis["price"]
                         users = get_alert_users()
 
-                        is_forex = "EURUSD" in sym
-                        sl_offset = 0.0015 if is_forex else 2.5
-                        tp1_offset = 0.0030 if is_forex else 5.0
-                        tp2_offset = 0.0070 if is_forex else 12.0
+                        # --- تخصيص قيم الخسارة والأهداف بدقة حسب كل أداة مالية ---
+                        if "EURUSD" in sym:
+                            sl_offset = 0.0015
+                            tp1_offset = 0.0030
+                            tp2_offset = 0.0070
+                            decimals = 4
+                        elif "BTC" in sym:
+                            sl_offset = 300.0   # 300$ وقف خسارة
+                            tp1_offset = 600.0  # 600$ هدف أول
+                            tp2_offset = 1200.0 # 1200$ هدف ثانٍ
+                            decimals = 2
+                        else:  # الذهب
+                            sl_offset = 3.0     # 3$ وقف خسارة
+                            tp1_offset = 6.0    # 6$ هدف أول
+                            tp2_offset = 12.0   # 12$ هدف ثانٍ
+                            decimals = 2
 
                         if current_state == "BUY":
-                            sl = round(analysis["demand_low"] - sl_offset, 4 if is_forex else 2)
-                            tp1 = round(price + tp1_offset, 4 if is_forex else 2)
-                            tp2 = round(price + tp2_offset, 4 if is_forex else 2)
+                            sl = round(price - sl_offset, decimals)
+                            tp1 = round(price + tp1_offset, decimals)
+                            tp2 = round(price + tp2_offset, decimals)
                             direction = "شراء (BUY) 📈"
                         else:
-                            sl = round(analysis["supply_high"] + sl_offset, 4 if is_forex else 2)
-                            tp1 = round(price - tp1_offset, 4 if is_forex else 2)
-                            tp2 = round(price - tp2_offset, 4 if is_forex else 2)
+                            sl = round(price + sl_offset, decimals)
+                            tp1 = round(price - tp1_offset, decimals)
+                            tp2 = round(price - tp2_offset, decimals)
                             direction = "بيع (SELL) 📉"
 
                         msg = (
