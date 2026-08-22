@@ -69,7 +69,7 @@ def get_main_trend_200(symbol):
     current_price = df_4h['Close'].iloc[-1]
     return "BULLISH" if current_price > ema200 else "BEARISH"
 
-# --- محرك SMC الاحترافي (BOS + OB + FVG + Buffer) ---
+# --- محرك SMC الاحترافي ---
 def analyze_smc_setup(symbol):
     df_15m = fetch_data(symbol, "15m", "5d")
     df_1h = fetch_data(symbol, "1h", "20d")
@@ -230,11 +230,13 @@ def handle_text_messages(message):
     add_user(chat_id)
 
     if text in SYMBOLS:
+        wait_msg = bot.send_message(chat_id, f"⏳ جاري فحص هيكل السوق لـ {text}، يرجى الانتظار ثوانٍ...")
+        
         symbol = SYMBOLS[text]
         analysis = analyze_smc_setup(symbol)
 
         if not analysis:
-            bot.send_message(chat_id, f"⚠️ جاري تحليل هيكل السوق لـ {text}...")
+            bot.edit_message_text(f"⚠️ تعذر جلب البيانات لـ {text} حالياً، حاول مجدداً.", chat_id, wait_msg.message_id)
             return
 
         trend_str = "📈 صاعد" if analysis['trend'] == "BULLISH" else "📉 هابط"
@@ -247,7 +249,7 @@ def handle_text_messages(message):
             f"🧱 منطقة العرض الحقيقية (Supply OB): `{analysis['supply']}`\n"
             f"⚡ الإشارة الحالية: `{analysis['signal']}`"
         )
-        bot.send_message(chat_id, msg, parse_mode="Markdown")
+        bot.edit_message_text(msg, chat_id, wait_msg.message_id, parse_mode="Markdown")
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
