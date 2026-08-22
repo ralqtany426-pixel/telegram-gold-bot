@@ -1,130 +1,68 @@
-import os
-import sqlite3
-import requests
 import telebot
 import threading
 import time
 import pandas as pd
-import numpy as np
-import yfinance as yf
+import MetaTrader5 as mt5
 from flask import Flask, request
 from telebot import types
 
-# ⚠️ تم تحديث مفتاح الـ API الجديد بأمان
+# --- 1. إعدادات المفتاح والبوت ---
 TOKEN = '8982114650:AAH9EVAcP9bJnm_3VC72J_o7vMpfTlim2W4'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# --- 🎯 ضبط الفارق السعري وتثبيت النظام ---
-def get_current_offset():
-    try:
-        conn = sqlite3.connect('bot_users.db', check_same_thread=False)
-        cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)''')
-        cursor.execute('SELECT value FROM settings WHERE key = "price_offset"')
-        res = cursor.fetchone()
-        if res is None:
-            cursor.execute('INSERT INTO settings (key, value) VALUES ("price_offset", 0.0)')
-            conn.commit()
-            val = 0.0
-        else:
-            val = res[0]
-        conn.close()
-        return val
-    except:
-        return 0.0
-
-def update_current_offset(new_val):
-    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)''')
-    cursor.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ("price_offset", ?)', (new_val,))
-    conn.commit()
-    conn.close()
-
+SYMBOL = "XAUUSD"  # الرمز المعرف لمنصتك
 last_vip_state = "NONE"
 
-# --- 1. قاعدة البيانات ---
-def init_db():
-    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-                        chat_id INTEGER PRIMARY KEY,
-                        alerts_enabled INTEGER DEFAULT 1
-                    )''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)''')
-    conn.commit()
-    conn.close()
+# --- 2. الاتصال بـ MetaTrader 5 ---
+def init_mt5():
+    if not mt5.initialize():
+        print("❌ فشل الاتصال بـ MetaTrader 5. تأكد من فتح البرنامج.")
+        return False
+    return True
 
-init_db()
+def get_mt5_price():
+    if not init_mt5():
+        return None
+    tick = mt5.symbol_info_tick(SYMBOL)
+    if tick:
+        return round(tick.bid, 2)
+    return None
 
-def add_user(chat_id):
-    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('INSERT OR IGNORE INTO users (chat_id, alerts_enabled) VALUES (?, 1)', (chat_id,))
-    conn.commit()
-    conn.close()
-
-def toggle_user_alerts(chat_id):
-    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('SELECT alerts_enabled FROM users WHERE chat_id = ?', (chat_id,))
-    res = cursor.fetchone()
-    if res is not None:
-        new_status = 0 if res[0] == 1 else 1
-        cursor.execute('UPDATE users SET alerts_enabled = ? WHERE chat_id = ?', (new_status, chat_id))
-        conn.commit()
-        conn.close()
-        return new_status
-    else:
-        cursor.execute('INSERT INTO users (chat_id, alerts_enabled) VALUES (?, 1)', (chat_id,))
-        conn.commit()
-        conn.close()
-        return 1
-
-def get_alert_users():
-    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('SELECT chat_id FROM users WHERE alerts_enabled = 1')
-    users = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return users
-
-# --- 2. جلب وتحليل البيانات ---
-def fetch_df(tf, period="10d"):
-    try:
-        offset = get_current_offset()
-        ticker = yf.Ticker("GC=F")
-        df = ticker.history(period=period, interval=tf)
-        if df.empty:
-            ticker = yf.Ticker("XAUUSD=X")
-            df = ticker.history(period=period, interval=tf)
-
-        if not df.empty:
-            df['Open'] += offset
-            df['High'] += offset
-            df['Low'] += offset
-            df['Close'] += offset
-        return df
-    except:
+def fetch_mt5_rates(timeframe, count=100):
+    if not init_mt5():
         return pd.DataFrame()
+    
+    tf_map = {
+        "15m": mt5.TIMEFRAME_M15,
+        "1h": mt5.TIMEFRAME_H1
+    }
+    
+    rates = mt5.copy_rates_from_pos(SYMBOL, tf_map.get(timeframe, mt5.TIMEFRAME_M15), 0, count)
+    if rates is None or len(rates) == 0:
+        return pd.DataFrame()
+        
+    df = pd.DataFrame(rates)
+    df['time'] = pd.to_datetime(df['time'], unit='s')
+    return df
 
+# --- 3. محرك التحليل الشامل ---
 def analyze_vip_multi_timeframe():
-    df_15m = fetch_df("15m", "5d")
-    df_1h = fetch_df("1h", "20d")
+    df_15m = fetch_mt5_rates("15m", 50)
+    df_1h = fetch_mt5_rates("1h", 100)
 
     if df_15m.empty or df_1h.empty:
         return None
 
-    current_price = round(df_15m['Close'].iloc[-1], 2)
+    current_price = get_mt5_price()
+    if not current_price:
+        current_price = round(df_15m['close'].iloc[-1], 2)
 
-    demand_low = round(df_1h['Low'].iloc[-50:-1].min(), 2)
+    demand_low = round(df_1h['low'].iloc[-50:-1].min(), 2)
     demand_high = round(demand_low + 4.5, 2)
 
-    supply_high = round(df_1h['High'].iloc[-50:-1].max(), 2)
+    supply_high = round(df_1h['high'].iloc[-50:-1].max(), 2)
     supply_low = round(supply_high - 4.5, 2)
-
-    has_fvg_15m = df_15m['Low'].iloc[-1] > df_15m['High'].iloc[-3]
 
     is_bullish_setup = (demand_low <= current_price <= demand_high)
     is_bearish_setup = (supply_low <= current_price <= supply_high)
@@ -141,99 +79,23 @@ def analyze_vip_multi_timeframe():
         "demand": f"{demand_low} ⟷ {demand_high}",
         "supply": f"{supply_low} ⟷ {supply_high}",
         "demand_low": demand_low,
-        "supply_high": supply_high,
-        "has_fvg": has_fvg_15m
+        "supply_high": supply_high
     }
 
-# --- 3. نظام المراقبة والتنبيهات ---
-def background_signal_sender():
-    global last_vip_state
-    time.sleep(15)
-    while True:
-        try:
-            users = get_alert_users()
-            if users:
-                analysis = analyze_vip_multi_timeframe()
-                if analysis and analysis["signal"] != "NONE":
-                    current_state = analysis["signal"]
-                    price = analysis["price"]
-
-                    if current_state != last_vip_state:
-                        last_vip_state = current_state
-
-                        if current_state == "BUY":
-                            sl = round(analysis["demand_low"] - 4.5, 2)
-                            tp1 = round(price + 4.0, 2)
-                            tp2 = round(price + 9.0, 2)
-                            tp3 = round(price + 15.0, 2)
-                            msg = (
-                                f"🚨 **تنبيه صفقة VIP جديدة (BUY)** 🚨\n"
-                                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                                f"📌 الاتجاه: 📈 شراء (BUY)\n"
-                                f"📍 السعر الحالي: `{price} $`\n"
-                                f"🧱 منطقة الطلب: `{analysis['demand']}`\n"
-                                f"⛔ وقف الخسارة (SL): `{sl} $`\n"
-                                f"🎯 الهدف الأول (TP1): `{tp1} $`\n"
-                                f"🎯 الهدف الثاني (TP2): `{tp2} $`\n"
-                            )
-                        else:
-                            sl = round(analysis["supply_high"] + 4.5, 2)
-                            tp1 = round(price - 4.0, 2)
-                            tp2 = round(price - 9.0, 2)
-                            msg = (
-                                f"🚨 **تنبيه صفقة VIP جديدة (SELL)** 🚨\n"
-                                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                                f"📌 الاتجاه: 📉 بيع (SELL)\n"
-                                f"📍 السعر الحالي: `{price} $`\n"
-                                f"🧱 منطقة العرض: `{analysis['supply']}`\n"
-                                f"⛔ وقف الخسارة (SL): `{sl} $`\n"
-                                f"🎯 الهدف الأول (TP1): `{tp1} $`\n"
-                                f"🎯 الهدف الثاني (TP2): `{tp2} $`\n"
-                            )
-
-                        for chat_id in users:
-                            try:
-                                bot.send_message(chat_id, msg, parse_mode="Markdown")
-                                time.sleep(0.3)
-                            except:
-                                pass
-
-            time.sleep(60)
-        except Exception as e:
-            print(f"Loop error: {e}")
-            time.sleep(60)
-
-threading.Thread(target=background_signal_sender, daemon=True).start()
-
-# --- 4. أوامر البوت ---
-@app.route('/')
-def home():
-    return "Bot Active!", 200
-
-@app.route(f'/{TOKEN}', methods=['POST'])
-def receive_message():
-    json_str = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return "!", 200
-
+# --- 4. أوامر البوت والتفاعل ---
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    add_user(message.chat.id)
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
-        types.KeyboardButton("💰 السعر اللحظي"),
+        types.KeyboardButton("💰 السعر اللحظي (MT5)"),
         types.KeyboardButton("🎯 فحص الفرصة الحالية (VIP)"),
-        types.KeyboardButton("➕ زيادة الفارق (+0.5)"),
-        types.KeyboardButton("➖ تقليل الفارق (-0.5)"),
-        types.KeyboardButton("🔔 التنبيهات"),
         types.KeyboardButton("🧮 حاسبة المخاطر")
     )
     welcome_text = (
-        f"👑 **النظام الاحترافي لتداول الذهب**\n"
+        f"👑 **النظام المربوط بـ MetaTrader 5 المباشر**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"مرحباً بك يا عبد الله.\n"
-        f"اختر من الأزرار بالأسفل:"
+        f"تم ضبط البوت وقراءة السعر المباشر لرمز **{SYMBOL}** من منصتك."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
@@ -241,57 +103,36 @@ def start_command(message):
 def handle_text_messages(message):
     text = message.text
     chat_id = message.chat.id
-    add_user(chat_id)
 
-    if text == "➕ زيادة الفارق (+0.5)":
-        current = get_current_offset()
-        new_val = round(current + 0.5, 2)
-        update_current_offset(new_val)
-        bot.send_message(chat_id, f"✅ تم زيادة الفارق إلى: `{new_val}`", parse_mode="Markdown")
-        return
-
-    elif text == "➖ تقليل الفارق (-0.5)":
-        current = get_current_offset()
-        new_val = round(current - 0.5, 2)
-        update_current_offset(new_val)
-        bot.send_message(chat_id, f"✅ تم تقليل الفارق إلى: `{new_val}`", parse_mode="Markdown")
-        return
-
-    analysis = analyze_vip_multi_timeframe()
-    if not analysis:
-        bot.send_message(chat_id, "⚠️ جاري الاتصال بالخادم... يرجى المحاولة بعد لحظات.")
-        return
-
-    price = analysis["price"]
-
-    if text == "💰 السعر اللحظي":
-        bot.send_message(chat_id, f"💰 **سعر الذهب اللحظي:**\n`{price} $`", parse_mode="Markdown")
+    if text == "💰 السعر اللحظي (MT5)":
+        price = get_mt5_price()
+        if price:
+            bot.send_message(chat_id, f"💰 **سعر الذهب المباشر (MT5 - XAUUSD):**\n`{price} $`", parse_mode="Markdown")
+        else:
+            bot.send_message(chat_id, "⚠️ تعذر الاتصال بـ MT5. تأكد من تشغيل البرنامج على جهاز الكمبيوتر.")
 
     elif text == "🎯 فحص الفرصة الحالية (VIP)":
+        analysis = analyze_vip_multi_timeframe()
+        if not analysis:
+            bot.send_message(chat_id, "⚠️ تعذر جلب البيانات المباشرة من MT5.")
+            return
+
         msg = (
-            f"📊 **تقرير التحليل الشامل:**\n"
+            f"📊 **تقرير التحليل المباشر (XAUUSD):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 السعر الحالي: `{price} $`\n"
+            f"📍 السعر الحالي: `{analysis['price']} $`\n"
             f"🧱 منطقة الطلب: `{analysis['demand']}`\n"
             f"🧱 منطقة العرض: `{analysis['supply']}`\n"
             f"⚡ حالة الإشارة الحالية: `{analysis['signal']}`"
         )
         bot.send_message(chat_id, msg, parse_mode="Markdown")
 
-    elif text == "🔔 التنبيهات":
-        new_status = toggle_user_alerts(chat_id)
-        status_text = "🟢 **تم تفعيل التنبيهات.**" if new_status == 1 else "🔴 **تم إيقاف التنبيهات.**"
-        bot.send_message(chat_id, status_text, parse_mode="Markdown")
-
     elif text == "🧮 حاسبة المخاطر":
         bot.send_message(chat_id, "🧮 **إدارة المخاطر:** يُنصح بالمخاطرة بـ 1% فقط من رأس المال لكل صفقة.", parse_mode="Markdown")
 
 if __name__ == '__main__':
-    external_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if external_url:
-        bot.remove_webhook()
-        time.sleep(1)
-        bot.set_webhook(url=f"{external_url}/{TOKEN}")
-
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    if init_mt5():
+        print("✅ تم الاتصال بـ MetaTrader 5 بنجاح لرمز XAUUSD.")
+        bot.infinity_polling()
+    else:
+        print("❌ لم يتم الاتصال! تأكد من فتح تطبيق MetaTrader 5 أولاً.")
