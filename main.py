@@ -10,11 +10,12 @@ import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
-TOKEN = '8982114650:AAFE5ftQJD9apfBjMmbTqEuX5hcvFkYVNRg'
+# ⚠️ تم تحديث مفتاح الـ API الجديد بأمان
+TOKEN = '8982114650:AAH9EVAcP9bJnm_3VC72J_o7vMpfTlim2W4'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# --- 🎯 الفارق السعري لتطابق MT5 ---
+# --- 🎯 ضبط الفارق السعري وتثبيت النظام ---
 def get_current_offset():
     try:
         conn = sqlite3.connect('bot_users.db', check_same_thread=False)
@@ -23,15 +24,15 @@ def get_current_offset():
         cursor.execute('SELECT value FROM settings WHERE key = "price_offset"')
         res = cursor.fetchone()
         if res is None:
-            cursor.execute('INSERT INTO settings (key, value) VALUES ("price_offset", -1.14)')
+            cursor.execute('INSERT INTO settings (key, value) VALUES ("price_offset", 0.0)')
             conn.commit()
-            val = -1.14
+            val = 0.0
         else:
             val = res[0]
         conn.close()
         return val
     except:
-        return -1.14
+        return 0.0
 
 def update_current_offset(new_val):
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
@@ -89,7 +90,7 @@ def get_alert_users():
     conn.close()
     return users
 
-# --- 2. جلب وتحليل متعدد الفريمات (Multi-Timeframe SMC Engine) ---
+# --- 2. جلب وتحليل البيانات ---
 def fetch_df(tf, period="10d"):
     try:
         offset = get_current_offset()
@@ -98,7 +99,7 @@ def fetch_df(tf, period="10d"):
         if df.empty:
             ticker = yf.Ticker("XAUUSD=X")
             df = ticker.history(period=period, interval=tf)
-        
+
         if not df.empty:
             df['Open'] += offset
             df['High'] += offset
@@ -109,30 +110,23 @@ def fetch_df(tf, period="10d"):
         return pd.DataFrame()
 
 def analyze_vip_multi_timeframe():
-    # جلب بيانات الفريمات الأربعة المطلوبة
     df_15m = fetch_df("15m", "5d")
-    df_30m = fetch_df("30m", "10d")
     df_1h = fetch_df("1h", "20d")
-    df_4h = fetch_df("4h", "60d")
 
-    if df_15m.empty or df_30m.empty or df_1h.empty or df_4h.empty:
+    if df_15m.empty or df_1h.empty:
         return None
 
     current_price = round(df_15m['Close'].iloc[-1], 2)
 
-    # تحليل مناطق العرض والطلب من فريم 1 ساعة و 4 ساعات
     demand_low = round(df_1h['Low'].iloc[-50:-1].min(), 2)
     demand_high = round(demand_low + 4.5, 2)
 
     supply_high = round(df_1h['High'].iloc[-50:-1].max(), 2)
     supply_low = round(supply_high - 4.5, 2)
 
-    # التحقق من شروط التوافق (Confluence)
-    # فحص FVG على 15 دقيقة
     has_fvg_15m = df_15m['Low'].iloc[-1] > df_15m['High'].iloc[-3]
 
-    # تحديد الاتجاه بناءً على توافق الفريمات
-    is_bullish_setup = (demand_low <= current_price <= demand_high) or has_fvg_15m
+    is_bullish_setup = (demand_low <= current_price <= demand_high)
     is_bearish_setup = (supply_low <= current_price <= supply_high)
 
     signal_type = "NONE"
@@ -151,7 +145,7 @@ def analyze_vip_multi_timeframe():
         "has_fvg": has_fvg_15m
     }
 
-# --- 3. نظام المراقبة والتنبيهات التلقائية ---
+# --- 3. نظام المراقبة والتنبيهات ---
 def background_signal_sender():
     global last_vip_state
     time.sleep(15)
@@ -173,45 +167,28 @@ def background_signal_sender():
                             tp2 = round(price + 9.0, 2)
                             tp3 = round(price + 15.0, 2)
                             msg = (
-                                f"🚨🔥 **تنبيه صفقة VIP مؤكدة جديدة (SMC - BUY)** 🔥🚨\n"
+                                f"🚨 **تنبيه صفقة VIP جديدة (BUY)** 🚨\n"
                                 f"━━━━━━━━━━━━━━━━━━━━━\n"
-                                f"📌 الاتجاه: 📈 شراء مؤكدة (VIP BUY - Smart Money)\n"
+                                f"📌 الاتجاه: 📈 شراء (BUY)\n"
                                 f"📍 السعر الحالي: `{price} $`\n"
-                                f"🌟 نسبة الثقة: `92%`\n"
-                                f"🧱 منطقة الطلب (Demand Zone): `{analysis['demand']}`\n"
-                                f"🧱 منطقة العرض (Supply Zone): `{analysis['supply']}`\n"
+                                f"🧱 منطقة الطلب: `{analysis['demand']}`\n"
                                 f"⛔ وقف الخسارة (SL): `{sl} $`\n"
                                 f"🎯 الهدف الأول (TP1): `{tp1} $`\n"
                                 f"🎯 الهدف الثاني (TP2): `{tp2} $`\n"
-                                f"🎯 الهدف الثالث (TP3): `{tp3} $`\n\n"
-                                f"⏱️ **توافق الفريمات (SMC):**\n"
-                                f"• 15د: تشكل نموذج Order Block شرائي واختبار الفجوة (FVG: {'نعم ✅' if analysis['has_fvg'] else 'لا ❌'})\n"
-                                f"• 30د: تغير مسار الهيكل الداخلي (CHOCH) نحو الصعود\n"
-                                f"• 1س: احترام منطقة الطلب الرئيسية واستقرار الهيكل (BOS)\n"
-                                f"• 4س: تدفق السيولة المؤسسية الإيجابية"
                             )
                         else:
                             sl = round(analysis["supply_high"] + 4.5, 2)
                             tp1 = round(price - 4.0, 2)
                             tp2 = round(price - 9.0, 2)
-                            tp3 = round(price - 15.0, 2)
                             msg = (
-                                f"🚨🔥 **تنبيه صفقة VIP مؤكدة جديدة (SMC - SELL)** 🔥🚨\n"
+                                f"🚨 **تنبيه صفقة VIP جديدة (SELL)** 🚨\n"
                                 f"━━━━━━━━━━━━━━━━━━━━━\n"
-                                f"📌 الاتجاه: 📉 بيع مؤكدة (VIP SELL - Smart Money)\n"
+                                f"📌 الاتجاه: 📉 بيع (SELL)\n"
                                 f"📍 السعر الحالي: `{price} $`\n"
-                                f"🌟 نسبة الثقة: `92%`\n"
-                                f"🧱 منطقة الطلب (Demand Zone): `{analysis['demand']}`\n"
-                                f"🧱 منطقة العرض (Supply Zone): `{analysis['supply']}`\n"
+                                f"🧱 منطقة العرض: `{analysis['supply']}`\n"
                                 f"⛔ وقف الخسارة (SL): `{sl} $`\n"
                                 f"🎯 الهدف الأول (TP1): `{tp1} $`\n"
                                 f"🎯 الهدف الثاني (TP2): `{tp2} $`\n"
-                                f"🎯 الهدف الثالث (TP3): `{tp3} $`\n\n"
-                                f"⏱️ **توافق الفريمات (SMC):**\n"
-                                f"• 15د: تشكل نموذج Order Block بيعي واختبار الفجوة\n"
-                                f"• 30د: تغير مسار الهيكل الداخلي (CHOCH) نحو الهبوط\n"
-                                f"• 1س: احترام منطقة العرض الرئيسية واستقرار الهيكل (BOS)\n"
-                                f"• 4س: تدفق السيولة المؤسسية السلبية"
                             )
 
                         for chat_id in users:
@@ -231,7 +208,7 @@ threading.Thread(target=background_signal_sender, daemon=True).start()
 # --- 4. أوامر البوت ---
 @app.route('/')
 def home():
-    return "VIP Multi-Timeframe SMC Bot Active!", 200
+    return "Bot Active!", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
@@ -253,10 +230,9 @@ def start_command(message):
         types.KeyboardButton("🧮 حاسبة المخاطر")
     )
     welcome_text = (
-        f"👑 **النظام الاحترافي لتداول الذهب (Multi-TF VIP SMC)**\n"
+        f"👑 **النظام الاحترافي لتداول الذهب**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"مرحباً يا عبد الله.\n"
-        f"البوت يعمل الآن بتقنية دمج الفريمات الأربعة (15د، 30د، 1س، 4س) لاستخراج صفقات الـ VIP.\n\n"
+        f"مرحباً بك يا عبد الله.\n"
         f"اختر من الأزرار بالأسفل:"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
@@ -271,45 +247,44 @@ def handle_text_messages(message):
         current = get_current_offset()
         new_val = round(current + 0.5, 2)
         update_current_offset(new_val)
-        bot.send_message(chat_id, f"✅ تم زيادة الفارق السعري إلى: `{new_val}`", parse_mode="Markdown")
+        bot.send_message(chat_id, f"✅ تم زيادة الفارق إلى: `{new_val}`", parse_mode="Markdown")
         return
 
     elif text == "➖ تقليل الفارق (-0.5)":
         current = get_current_offset()
         new_val = round(current - 0.5, 2)
         update_current_offset(new_val)
-        bot.send_message(chat_id, f"✅ تم تقليل الفارق السعري إلى: `{new_val}`", parse_mode="Markdown")
+        bot.send_message(chat_id, f"✅ تم تقليل الفارق إلى: `{new_val}`", parse_mode="Markdown")
         return
 
     analysis = analyze_vip_multi_timeframe()
     if not analysis:
-        bot.send_message(chat_id, "⚠️ جاري الاتصال بخوادم الفريمات المتعددة... يرجى المحاولة بعد لحظات.")
+        bot.send_message(chat_id, "⚠️ جاري الاتصال بالخادم... يرجى المحاولة بعد لحظات.")
         return
 
     price = analysis["price"]
 
     if text == "💰 السعر اللحظي":
-        bot.send_message(chat_id, f"💰 **سعر الذهب الحقيقي (MT5):**\n`{price} $`", parse_mode="Markdown")
+        bot.send_message(chat_id, f"💰 **سعر الذهب اللحظي:**\n`{price} $`", parse_mode="Markdown")
 
     elif text == "🎯 فحص الفرصة الحالية (VIP)":
         msg = (
-            f"📊 **تقرير التحليل الشامل (Multi-TF SMC):**\n"
+            f"📊 **تقرير التحليل الشامل:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📍 السعر الحالي: `{price} $`\n"
             f"🧱 منطقة الطلب: `{analysis['demand']}`\n"
             f"🧱 منطقة العرض: `{analysis['supply']}`\n"
-            f"⚡ حالة الإشارة الحالية: `{analysis['signal']}`\n\n"
-            f"• الفريمات (15د، 30د، 1س، 4س) متزامنة وتراقب السوق لحظياً."
+            f"⚡ حالة الإشارة الحالية: `{analysis['signal']}`"
         )
         bot.send_message(chat_id, msg, parse_mode="Markdown")
 
     elif text == "🔔 التنبيهات":
         new_status = toggle_user_alerts(chat_id)
-        status_text = "🟢 **تم تفعيل تنبيهات الـ VIP المتعددة.**" if new_status == 1 else "🔴 **تم إيقاف التنبيهات.**"
+        status_text = "🟢 **تم تفعيل التنبيهات.**" if new_status == 1 else "🔴 **تم إيقاف التنبيهات.**"
         bot.send_message(chat_id, status_text, parse_mode="Markdown")
 
     elif text == "🧮 حاسبة المخاطر":
-        bot.send_message(chat_id, "🧮 **إدارة المخاطر:** خاطِر بـ 1% فقط من حسابك لكل صفقة.", parse_mode="Markdown")
+        bot.send_message(chat_id, "🧮 **إدارة المخاطر:** يُنصح بالمخاطرة بـ 1% فقط من رأس المال لكل صفقة.", parse_mode="Markdown")
 
 if __name__ == '__main__':
     external_url = os.environ.get("RENDER_EXTERNAL_URL")
