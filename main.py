@@ -12,8 +12,13 @@ bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
 PRICE_OFFSET = 0.0 
-# لحفظ آخر حالة تم إرسال تنبيه لها لمنع التكرار المزعج ("BUY", "SELL", أو "NONE")
 last_signal_state = "NONE" 
+
+try:
+    import MetaTrader5 as mt5
+    MT5_AVAILABLE = True
+except ImportError:
+    MT5_AVAILABLE = False
 
 def init_db():
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
@@ -60,6 +65,22 @@ def get_alert_users():
     return users
 
 def get_gold_price():
+    if MT5_AVAILABLE:
+        try:
+            if mt5.initialize():
+                symbol = "XAUUSD"
+                tick = mt5.symbol_info_tick(symbol)
+                if not tick:
+                    symbol = "GOLD"
+                    tick = mt5.symbol_info_tick(symbol)
+                
+                if tick:
+                    mt5.shutdown()
+                    return round(tick.bid, 2)
+                mt5.shutdown()
+        except:
+            pass
+
     try:
         response = requests.get("https://api.gold-api.com/price/XAU", timeout=5)
         raw_price = float(response.json().get("price", 0.0))
@@ -67,22 +88,15 @@ def get_gold_price():
     except:
         return round(2400.0 + PRICE_OFFSET, 2)
 
-# --- 🎯 خوارزمية حساب SMC (Order Blocks + Zones) ---
+# --- 🎯 خوارزمية حساب SMC الذكية ---
 def analyze_smc_structure(price):
-    """
-    تحديد مناطق العرض والطلب بدقة مع اقتطاع الشمعة المؤسسية (Order Block)
-    """
-    # 1. نطاق الشراء (Bullish Order Block & Demand Zone)
     demand_low = round(price - 6.0, 2)
     demand_high = round(price - 1.0, 2)
-    # الـ Order Block الشرائي يتمركز في الجزء السفلي الأكثر دقة من منطقة الطلب
     bullish_ob_low = round(price - 4.5, 2)
     bullish_ob_high = round(price - 1.5, 2)
 
-    # 2. نطاق البيع (Bearish Order Block & Supply Zone)
     supply_low = round(price + 1.0, 2)
     supply_high = round(price + 6.0, 2)
-    # الـ Order Block البيعي يتمركز في الجزء العلوي الأكثر دقة من منطقة العرض
     bearish_ob_low = round(price + 1.5, 2)
     bearish_ob_high = round(price + 4.5, 2)
 
@@ -103,7 +117,6 @@ def analyze_smc_structure(price):
 
 def get_buy_signal(price):
     smc = analyze_smc_structure(price)
-    # وقف الخسارة دقيق جداً أسفل الـ Order Block الشرائي بـ 2 دولار
     stop_loss = round(smc["bullish_ob_low"] - 2.0, 2)
     tp1 = round(price + 4.5, 2)
     tp2 = round(price + 9.0, 2)
@@ -114,7 +127,6 @@ def get_buy_signal(price):
 
 def get_sell_signal(price):
     smc = analyze_smc_structure(price)
-    # وقف الخسارة دقيق جداً أعلى الـ Order Block البيعي بـ 2 دولار
     stop_loss = round(smc["bearish_ob_high"] + 2.0, 2)
     tp1 = round(price - 4.5, 2)
     tp2 = round(price - 9.0, 2)
@@ -123,7 +135,7 @@ def get_sell_signal(price):
             stop_loss, tp1, tp2, tp3, 
             "رفض عند Order Block بيعي واختبار FVG", "كسر هيكل السعر نحو الهبوط (CHOCH)", "احترام كسر الهيكل الهابط (BOS)", "سحب سيولة من القمم العالية")
 
-# --- 🚀 المراقبة الذكية المعتمدة على الـ Order Block ---
+# --- 🚀 المراقبة الذكية بالخلفية ---
 def background_signal_sender():
     global last_signal_state
     time.sleep(10) 
@@ -134,7 +146,6 @@ def background_signal_sender():
                 price = get_gold_price()
                 smc = analyze_smc_structure(price)
 
-                # شرط التنبيه: لمس السعر لنطاق الـ Order Block المباشر
                 is_in_bullish_ob = (smc["bullish_ob_low"] <= price <= smc["bullish_ob_high"])
                 is_in_bearish_ob = (smc["bearish_ob_low"] <= price <= smc["bearish_ob_high"])
 
@@ -181,7 +192,7 @@ def background_signal_sender():
                         except:
                             pass
 
-            time.sleep(20) # فحص مستمر كل 20 ثانية لالتقاط ملامسة الـ Order Block بسرعة
+            time.sleep(20) 
         except:
             time.sleep(20)
 
@@ -189,7 +200,7 @@ threading.Thread(target=background_signal_sender, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "SMC Gold Bot (OB & Zones Active) is Running!", 200
+    return "SMC Smart Gold Bot is Active!", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
@@ -205,16 +216,15 @@ def start_command(message):
     markup.add(
         types.KeyboardButton("💰 السعر اللحظي"),
         types.KeyboardButton("📊 مناطق SMC و Order Block"),
-        types.KeyboardButton("🚀 صفقة شراء VIP"),
-        types.KeyboardButton("🔻 صفقة بيع VIP"),
+        types.KeyboardButton("🎯 الفرصة الحالية (SMC)"),
         types.KeyboardButton("🔔 التنبيهات"),
         types.KeyboardButton("🧮 حاسبة المخاطر")
     )
     welcome_text = (
-        f"👑 **النظام الذكي لتداول الذهب (SMC Order Block & Zones)**\n"
+        f"👑 **النظام الذكي لتداول الذهب (Smart SMC Bot)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"مرحباً يا عبد الله.\n"
-        f"البوت يحدد الآن كتل الأوامر المؤسسية (Order Blocks) ومناطق العرض والطلب. التنبيهات لا تُرسل إلا عند اختبار الـ Order Block الفعلي للدخول بأعلى دقة وأقل نسبة مخاطرة.\n\n"
+        f"تم دمج النظام الذكي لاتخاذ القرار تلقائياً، اضغط على زر `🎯 الفرصة الحالية (SMC)` لفحص حالة السوق ومنع أي شتات.\n\n"
         f"اختر من الأزرار بالأسفل:"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
@@ -241,41 +251,51 @@ def handle_text_messages(message):
         )
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-    elif text == "🚀 صفقة شراء VIP":
-        signal_type, prob, ob, dem, sup, sl, tp1, tp2, tp3, tf15, tf30, tf1h, tf4h = get_buy_signal(price)
-        msg = (
-            f"🚀 **إشارة شراء مؤكدة (Bullish Order Block)**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 السعر الحالي: `{price} $`\n"
-            f"🌟 نسبة النجاح: `{prob}%`\n"
-            f"📦 **نطاق الـ Order Block:** `{ob}`\n"
-            f"🧱 **منطقة الطلب:** `{dem}`\n"
-            f"⛔ **وقف الخسارة (SL):** `{sl} $`\n"
-            f"🎯 TP1: `{tp1} $` | TP2: `{tp2} $` | TP3: `{tp3} $`"
-        )
-        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+    elif text == "🎯 الفرصة الحالية (SMC)":
+        is_in_bullish = (smc["bullish_ob_low"] <= price <= smc["bullish_ob_high"])
+        is_in_bearish = (smc["bearish_ob_low"] <= price <= smc["bearish_ob_high"])
 
-    elif text == "🔻 صفقة بيع VIP":
-        signal_type, prob, ob, dem, sup, sl, tp1, tp2, tp3, tf15, tf30, tf1h, tf4h = get_sell_signal(price)
-        msg = (
-            f"🔻 **إشارة بيع مؤكدة (Bearish Order Block)**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 السعر الحالي: `{price} $`\n"
-            f"🌟 نسبة النجاح: `{prob}%`\n"
-            f"📦 **نطاق الـ Order Block:** `{ob}`\n"
-            f"🧱 **منطقة العرض:** `{sup}`\n"
-            f"⛔ **وقف الخسارة (SL):** `{sl} $`\n"
-            f"🎯 TP1: `{tp1} $` | TP2: `{tp2} $` | TP3: `{tp3} $`"
-        )
+        if is_in_bullish:
+            signal_type, prob, ob, dem, sup, sl, tp1, tp2, tp3, tf15, tf30, tf1h, tf4h = get_buy_signal(price)
+            msg = (
+                f"🚀 **إشارة شراء مؤكدة (Bullish OB - BUY)**\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📍 السعر الحالي في منطقة الطلب: `{price} $`\n"
+                f"🌟 نسبة النجاح: `{prob}%`\n"
+                f"📦 **Order Block الشرائي:** `{ob}`\n"
+                f"⛔ **وقف الخسارة (SL):** `{sl} $`\n"
+                f"🎯 TP1: `{tp1} $` | TP2: `{tp2} $` | TP3: `{tp3} $`"
+            )
+        elif is_in_bearish:
+            signal_type, prob, ob, dem, sup, sl, tp1, tp2, tp3, tf15, tf30, tf1h, tf4h = get_sell_signal(price)
+            msg = (
+                f"🔻 **إشارة بيع مؤكدة (Bearish OB - SELL)**\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📍 السعر الحالي في منطقة العرض: `{price} $`\n"
+                f"🌟 نسبة النجاح: `{prob}%`\n"
+                f"📦 **Order Block البيعي:** `{ob}`\n"
+                f"⛔ **وقف الخسارة (SL):** `{sl} $`\n"
+                f"🎯 TP1: `{tp1} $` | TP2: `{tp2} $` | TP3: `{tp3} $`"
+            )
+        else:
+            msg = (
+                f"⏳ **منطقة انتظار وتذبذب محايدة (No Trade Zone)**\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📍 السعر الحالي: `{price} $`\n\n"
+                f"⚠️ السعر يتحرك حالياً بين منطقتي العرض والطلب ولا يلمس أي Order Block مؤكد.\n"
+                f"💡 **نصيحة النظام:** يفضل الانتظار حتى يصل السعر لإحدى المنطقتين التاليين:\n"
+                f"• للبيع 🔻: ينتظر وصول السعر لـ `{smc['bearish_ob']}`\n"
+                f"• للشراء 📈: ينتظر وصول السعر لـ `{smc['bullish_ob']}`"
+            )
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
     elif text == "🔔 التنبيهات":
         new_status = toggle_user_alerts(message.chat.id)
-        status_text = "🟢 **تم تفعيل التنبيهات! ستصلك رسالة فور دخول السعر نطاق الـ Order Block المباشر.**" if new_status == 1 else "🔴 **تم إيقاف التنبيهات الآلية.**"
+        status_text = "🟢 **تم تفعيل التنبيهات! ستصلك إشارة فور دخول السعر إحدى مناطق الـ Order Block.**" if new_status == 1 else "🔴 **تم إيقاف التنبيهات الآلية.**"
         bot.send_message(message.chat.id, status_text, parse_mode="Markdown")
 
     elif text == "🧮 حاسبة المخاطر":
-        msg = f"🧮 **إدارة المخاطر:**\nبما أن الـ Order Block يقلل وقف الخسارة، فإن نسبة Risk:Reward أصبحت عالية جداً. احرص على التداول بمخاطرة 1% إلى 2% فقط."
+        msg = f"🧮 **إدارة المخاطر:**\nاحرص دائماً على عدم تجاوز مخاطرة 1% إلى 2% من رأس مالك لكل صفقة."
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 if __name__ == '__main__':
