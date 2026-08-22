@@ -195,6 +195,13 @@ def background_monitor():
 
 threading.Thread(target=background_monitor, daemon=True).start()
 
+# --- ربط Webhook التلقائي مع Render ---
+external_url = os.environ.get("RENDER_EXTERNAL_URL")
+if external_url:
+    bot.remove_webhook()
+    time.sleep(1)
+    bot.set_webhook(url=f"{external_url}/{TOKEN}")
+
 @app.route('/')
 def home():
     return "Advanced SMC Bot (BOS + OB) Active!", 200
@@ -231,7 +238,7 @@ def handle_text_messages(message):
 
     if text in SYMBOLS:
         wait_msg = bot.send_message(chat_id, f"⏳ جاري فحص هيكل السوق لـ {text}، يرجى الانتظار ثوانٍ...")
-        
+
         symbol = SYMBOLS[text]
         analysis = analyze_smc_setup(symbol)
 
