@@ -10,26 +10,22 @@ import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
-# --- 1. إعدادات المفتاح والبوت ---
 TOKEN = '8982114650:AAH9EVAcP9bJnm_3VC72J_o7vMpfTlim2W4'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# قائمة الأزواج المدعومة
 SYMBOLS = {
     "الذهب 🥇": "GC=F",
     "اليورو/دولار 💶": "EURUSD=X",
     "البيتكوين ₿": "BTC-USD"
 }
 
-# حالات التنبيه الأخيرة لكل زوج لمنع التكرار
 last_states = {
     "الذهب 🥇": "NONE",
     "اليورو/دولار 💶": "NONE",
     "البيتكوين ₿": "NONE"
 }
 
-# --- 2. قاعدة البيانات للمشتركين ---
 def init_db():
     conn = sqlite3.connect('bot_users.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -54,7 +50,6 @@ def get_alert_users():
     conn.close()
     return users
 
-# --- 3. جلب البيانات وتحليل الاتجاه بـ 200 شمعة ---
 def fetch_data(symbol, tf, period="60d"):
     try:
         ticker = yf.Ticker(symbol)
@@ -70,55 +65,79 @@ def get_main_trend_200(symbol):
     df_4h = fetch_data(symbol, "1h", "60d")
     if df_4h.empty or len(df_4h) < 200:
         return "NEUTRAL"
-    
     ema200 = df_4h['Close'].ewm(span=200, adjust=False).mean().iloc[-1]
     current_price = df_4h['Close'].iloc[-1]
-
     return "BULLISH" if current_price > ema200 else "BEARISH"
 
-# --- 4. محرك التحليل الشامل (SMC + EMA 200) ---
+# --- محرك SMC الاحترافي (BOS + OB + FVG + Buffer) ---
 def analyze_smc_setup(symbol):
     df_15m = fetch_data(symbol, "15m", "5d")
     df_1h = fetch_data(symbol, "1h", "20d")
 
-    if df_15m.empty or df_1h.empty:
+    if df_15m.empty or df_1h.empty or len(df_1h) < 30:
         return None
 
     current_price = round(df_15m['Close'].iloc[-1], 4 if "EURUSD" in symbol else 2)
     main_trend = get_main_trend_200(symbol)
+    buffer = 0.0003 if "EURUSD" in symbol else (0.8 if "GC" in symbol else 15.0)
 
-    df_1h['highest_high'] = df_1h['High'].shift(1).rolling(20).max()
-    df_1h['lowest_low'] = df_1h['Low'].shift(1).rolling(20).min()
+    # 1. تحديد Swing Highs & Lows الدقيقة (إطار الساعتين/الساعة)
+    df_1h['swing_high'] = (df_1h['High'] > df_1h['High'].shift(1)) & (df_1h['High'] > df_1h['High'].shift(2)) & \
+                          (df_1h['High'] > df_1h['High'].shift(-1)) & (df_1h['High'] > df_1h['High'].shift(-2))
+    df_1h['swing_low'] = (df_1h['Low'] < df_1h['Low'].shift(1)) & (df_1h['Low'] < df_1h['Low'].shift(2)) & \
+                         (df_1h['Low'] < df_1h['Low'].shift(-1)) & (df_1h['Low'] < df_1h['Low'].shift(-2))
 
-    bullish_ob = (df_1h['Close'] < df_1h['Open']) & (df_1h['High'].shift(-1) > df_1h['highest_high'])
-    bearish_ob = (df_1h['Close'] > df_1h['Open']) & (df_1h['Low'].shift(-1) < df_1h['lowest_low'])
+    # 2. البحث عن كسر الهيكل (BOS) واقتناص شمعة Order Block الحقيقية
+    demand_low, demand_high = None, None
+    supply_low, supply_high = None, None
 
-    df_demand = df_1h[bullish_ob]
-    df_supply = df_1h[bearish_ob]
+    # البحث عن آخر BOS صاعد (Bullish BOS) -> اختيار آخر شمعة هابطة قبله (Demand OB)
+    for i in range(len(df_1h)-3, 5, -1):
+        if df_1h['swing_high'].iloc[i]:
+            last_high = df_1h['High'].iloc[i]
+            # التأكد من وجود إغلاق شمعة أعلى القمة (BOS)
+            if (df_1h['Close'].iloc[i+1:] > last_high).any():
+                # إيجاد آخر شمعة حمراء (Down Candle) قبل الشمعة المندفعة
+                ob_candidates = df_1h.iloc[i-5:i+1]
+                red_candles = ob_candidates[ob_candidates['Close'] < ob_candidates['Open']]
+                if not red_candles.empty:
+                    last_ob = red_candles.iloc[-1]
+                    demand_low = round(last_ob['Low'], 4 if "EURUSD" in symbol else 2)
+                    demand_high = round(last_ob['High'], 4 if "EURUSD" in symbol else 2)
+                    break
 
-    step = 0.0010 if "EURUSD" in symbol else 3.5
+    # البحث عن آخر BOS هابط (Bearish BOS) -> اختيار آخر شمعة صاعدة قبله (Supply OB)
+    for i in range(len(df_1h)-3, 5, -1):
+        if df_1h['swing_low'].iloc[i]:
+            last_low = df_1h['Low'].iloc[i]
+            # التأكد من وجود إغلاق شمعة أسفل القاع (BOS)
+            if (df_1h['Close'].iloc[i+1:] < last_low).any():
+                # إيجاد آخر شمعة خضراء (Up Candle) قبل الشمعة المندفعة
+                ob_candidates = df_1h.iloc[i-5:i+1]
+                green_candles = ob_candidates[ob_candidates['Close'] > ob_candidates['Open']]
+                if not green_candles.empty:
+                    last_ob = green_candles.iloc[-1]
+                    supply_high = round(last_ob['High'], 4 if "EURUSD" in symbol else 2)
+                    supply_low = round(last_ob['Low'], 4 if "EURUSD" in symbol else 2)
+                    break
 
-    if not df_demand.empty:
-        demand_low = round(df_demand.iloc[-1]['Low'], 4 if "EURUSD" in symbol else 2)
-        demand_high = round(df_demand.iloc[-1]['High'], 4 if "EURUSD" in symbol else 2)
-    else:
-        demand_low = round(df_1h['Low'].iloc[-30:-1].min(), 4 if "EURUSD" in symbol else 2)
-        demand_high = round(demand_low + step, 4 if "EURUSD" in symbol else 2)
+    # قيم افتراضية احتياطية في حال عدم اكتمال النمط
+    if demand_low is None:
+        demand_low = round(df_1h['Low'].iloc[-20:].min(), 4 if "EURUSD" in symbol else 2)
+        demand_high = round(demand_low + (buffer * 3), 4 if "EURUSD" in symbol else 2)
+    if supply_high is None:
+        supply_high = round(df_1h['High'].iloc[-20:].max(), 4 if "EURUSD" in symbol else 2)
+        supply_low = round(supply_high - (buffer * 3), 4 if "EURUSD" in symbol else 2)
 
-    if not df_supply.empty:
-        supply_high = round(df_supply.iloc[-1]['High'], 4 if "EURUSD" in symbol else 2)
-        supply_low = round(df_supply.iloc[-1]['Low'], 4 if "EURUSD" in symbol else 2)
-    else:
-        supply_high = round(df_1h['High'].iloc[-30:-1].max(), 4 if "EURUSD" in symbol else 2)
-        supply_low = round(supply_high - step, 4 if "EURUSD" in symbol else 2)
-
+    # 3. فحص الـ FVG الحقيقي المباشر على فريم 15 دقيقة
     has_fvg_buy = df_15m['Low'].iloc[-1] > df_15m['High'].iloc[-3]
     has_fvg_sell = df_15m['High'].iloc[-1] < df_15m['Low'].iloc[-3]
 
+    # 4. فلترة الإشارة (تطابق الاتجاه + لمس الـ OB مع الـ Buffer + وجود FVG)
     signal_type = "NONE"
-    if (demand_low <= current_price <= demand_high) and has_fvg_buy and (main_trend == "BULLISH"):
+    if ((demand_low - buffer) <= current_price <= (demand_high + buffer)) and has_fvg_buy and (main_trend == "BULLISH"):
         signal_type = "BUY"
-    elif (supply_low <= current_price <= supply_high) and has_fvg_sell and (main_trend == "BEARISH"):
+    elif ((supply_low - buffer) <= current_price <= (supply_high + buffer)) and has_fvg_sell and (main_trend == "BEARISH"):
         signal_type = "SELL"
 
     return {
@@ -131,7 +150,6 @@ def analyze_smc_setup(symbol):
         "supply_high": supply_high
     }
 
-# --- 5. نظام التنبيه الخلفي لجميع الأزواج ---
 def background_monitor():
     time.sleep(10)
     while True:
@@ -162,7 +180,7 @@ def background_monitor():
                             direction = "بيع (SELL) 📉"
 
                         msg = (
-                            f"🚨 **تنبيه SMC مؤكد على {name}** 🚨\n"
+                            f"🚨 **تنبيه SMC احترافي (BOS + OB) على {name}** 🚨\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n"
                             f"📌 الصفقة: {direction}\n"
                             f"📍 سعر الدخول: `{price}`\n"
@@ -184,10 +202,9 @@ def background_monitor():
 
 threading.Thread(target=background_monitor, daemon=True).start()
 
-# --- 6. التشغيل عبر Flask و Webhook ---
 @app.route('/')
 def home():
-    return "Multi-Asset SMC Bot Active!", 200
+    return "Advanced SMC Bot (BOS + OB) Active!", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
@@ -206,10 +223,10 @@ def start_command(message):
         types.KeyboardButton("البيتكوين ₿")
     )
     welcome_text = (
-        f"👑 **ماسح SMC الشامل للأسواق**\n"
+        f"👑 **ماسح SMC المطور (BOS + OB + FVG)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"البوت يراقب حالياً: الذهب، اليورو/دولار، والبيتكوين.\n"
-        f"اختر الزوج من الأزرار بالأسفل لمعاينة تحليله اللحظي."
+        f"تم تطوير خوارزمية تحديد مناطق العرض والطلب لتطابق كسر الهيكل الحقيقي.\n"
+        f"اختر الزوج لمعاينة تحليله اللحظي."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
@@ -222,19 +239,19 @@ def handle_text_messages(message):
     if text in SYMBOLS:
         symbol = SYMBOLS[text]
         analysis = analyze_smc_setup(symbol)
-        
+
         if not analysis:
-            bot.send_message(chat_id, f"⚠️ جاري الاتصال وتحديث بيانات {text}...")
+            bot.send_message(chat_id, f"⚠️ جاري تحليل هيكل السوق لـ {text}...")
             return
 
         trend_str = "📈 صاعد" if analysis['trend'] == "BULLISH" else "📉 هابط"
         msg = (
-            f"📊 **تقرير هيكل السوق لـ ({text}):**\n"
+            f"📊 **تقرير هيكل السوق المطور لـ ({text}):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"🌐 الاتجاه العام (200 شمعة): `{trend_str}`\n"
             f"📍 السعر الحالي: `{analysis['price']}`\n"
-            f"🧱 منطقة الطلب (Demand OB): `{analysis['demand']}`\n"
-            f"🧱 منطقة العرض (Supply OB): `{analysis['supply']}`\n"
+            f"🧱 منطقة الطلب الحقيقية (Demand OB): `{analysis['demand']}`\n"
+            f"🧱 منطقة العرض الحقيقية (Supply OB): `{analysis['supply']}`\n"
             f"⚡ الإشارة الحالية: `{analysis['signal']}`"
         )
         bot.send_message(chat_id, msg, parse_mode="Markdown")
