@@ -16,10 +16,10 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-# استخدام رموز Yahoo Finance المباشرة والمضمونة
+# استخدام رموز أصلية ومضمونة للبيانات اللحظية
 SYMBOLS = {
     "البيتكوين": "BTC-USD",
-    "الذهب": "GC=F",
+    "الذهب": "XAUUSD=X",
     "اليورو": "EURUSD=X"
 }
 
@@ -68,16 +68,38 @@ def fetch_klines(symbol_ticker, interval="15min"):
         "1day": ("1d", "3mo")
     }
     tf, period = tf_map.get(interval, ("15m", "1d"))
-    
+
+    # المحاولة الأولى: باستخدام yfinance المباشر
     try:
         ticker = yf.Ticker(symbol_ticker)
         df = ticker.history(period=period, interval=tf)
-        if not df.empty and len(df) >= 5:
+        if not df.empty and len(df) >= 3:
             df = df.reset_index()
-            df = df.rename(columns={'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close'})
             return df[['Open', 'High', 'Low', 'Close']]
     except Exception as e:
-        print(f"Fetch YFinance Error ({symbol_ticker} - {interval}): {e}")
+        print(f"yfinance method failed for {symbol_ticker}: {e}")
+
+    # المحاولة الثانية: سحب البيانات المباشر عبر HTTP API كبديل لتفادي الحظر
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol_ticker}?range={period}&interval={tf}"
+        res = requests.get(url, headers=headers, timeout=10)
+        data = res.json()
+        
+        result = data['chart']['result'][0]
+        quote = result['indicators']['quote'][0]
+        
+        df = pd.DataFrame({
+            'Open': quote['open'],
+            'High': quote['high'],
+            'Low': quote['low'],
+            'Close': quote['close']
+        }).dropna()
+
+        if not df.empty and len(df) >= 3:
+            return df
+    except Exception as e:
+        print(f"Direct API fallback failed for {symbol_ticker}: {e}")
 
     return pd.DataFrame()
 
@@ -112,7 +134,7 @@ def scan_high_winrate_signals(symbol_key):
         return None
 
     df = fetch_klines(ticker, "15min")
-    if df.empty or len(df) < 5:
+    if df.empty or len(df) < 3:
         return None
 
     decimals = 5 if symbol_key == "اليورو" else 2
