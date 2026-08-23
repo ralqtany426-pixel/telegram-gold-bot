@@ -14,13 +14,14 @@ app = Flask(__name__)
 
 session = requests.Session()
 session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
 })
 
+# ربط الأزواج بأسماء KuCoin
 SYMBOLS = {
-    "البيتكوين ₿": "BTCUSDT",
-    "الذهب 🥇": "PAXGUSDT",
-    "اليورو/دولار 💶": "EURUSDT"
+    "البيتكوين ₿": "BTC-USDT",
+    "الذهب 🥇": "PAXG-USDT",
+    "اليورو/دولار 💶": "EUR-USDT"
 }
 
 last_states = {
@@ -60,42 +61,35 @@ def get_alert_users():
         print(f"Error fetching users: {e}")
         return []
 
-# جلب البيانات عبر عدة سيرفرات لمنع حظر Render
-def fetch_klines(symbol_ticker, interval="15m", limit=50):
-    endpoints = [
-        f"https://api.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={interval}&limit={limit}",
-        f"https://api1.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={interval}&limit={limit}",
-        f"https://api2.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={interval}&limit={limit}",
-        f"https://api3.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={interval}&limit={limit}"
-    ]
-    
-    for url in endpoints:
-        try:
-            res = session.get(url, timeout=4)
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, list) and len(data) > 0:
-                    df = pd.DataFrame(data, columns=[
-                        'time', 'Open', 'High', 'Low', 'Close', 'Volume',
-                        'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
-                    ])
-                    df['Open'] = df['Open'].astype(float)
-                    df['High'] = df['High'].astype(float)
-                    df['Low'] = df['Low'].astype(float)
-                    df['Close'] = df['Close'].astype(float)
-                    return df
-        except Exception:
-            continue
+# جلب الشموع عبر KuCoin API بدلاً من Binance المكتومة في Render
+def fetch_klines(symbol_ticker, interval="15min"):
+    try:
+        url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol_ticker}&type={interval}"
+        res = session.get(url, timeout=5)
+        if res.status_code == 200:
+            data = res.json().get('data', [])
+            if data and len(data) > 0:
+                # KuCoin Structure: [time, open, close, high, low, volume, turnover]
+                df = pd.DataFrame(data, columns=['time', 'Open', 'Close', 'High', 'Low', 'Volume', 'Turnover'])
+                df['Open'] = df['Open'].astype(float)
+                df['Close'] = df['Close'].astype(float)
+                df['High'] = df['High'].astype(float)
+                df['Low'] = df['Low'].astype(float)
+                # ترتيب البيانات من القديم إلى الحديث
+                df = df.iloc[::-1].reset_index(drop=True)
+                return df
+    except Exception as e:
+        print(f"Fetch KuCoin Error ({symbol_ticker}): {e}")
             
     return pd.DataFrame()
 
-# تحليل مناطق SMC
+# تحليل SMC
 def analyze_smc_setup(symbol_key):
     ticker = SYMBOLS.get(symbol_key)
     if not ticker:
         return None
 
-    df = fetch_klines(ticker, "15m", 50)
+    df = fetch_klines(ticker, "15min")
 
     if df.empty or len(df) < 20:
         return None
@@ -226,13 +220,12 @@ def handle_text_messages(message):
     text = message.text.strip() if message.text else ""
     add_user(chat_id)
 
-    # التعرف المرن على الخيارات لمنع مشاكل اختلاف الإيموجي أو المسافات
     selected_key = None
     if "البيتكوين" in text:
         selected_key = "البيتكوين ₿"
-    elif "الذهب" in text:
+    elif "الذهب" in text or "XAU" in text.upper():
         selected_key = "الذهب 🥇"
-    elif "اليورو" in text:
+    elif "اليورو" in text or "EUR" in text.upper():
         selected_key = "اليورو/دولار 💶"
 
     if selected_key:
@@ -242,8 +235,10 @@ def handle_text_messages(message):
             bot.send_message(chat_id, f"⚠️ تعذر جلب البيانات لـ {text} حالياً. حاول مرة أخرى بعد لحظات.")
             return
 
+        pair_name = "XAU/USD (الذهب)" if selected_key == "الذهب 🥇" else selected_key
+
         msg = (
-            f"📊 **تقرير SMC اللحظي لـ ({selected_key}):**\n"
+            f"📊 **تقرير SMC اللحظي لـ ({pair_name}):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📍 السعر اللحظي: `{analysis['price']}`\n"
             f"🧱 منطقة الطلب (Demand/OB): `{analysis['demand']}`\n"
