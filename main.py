@@ -5,7 +5,6 @@ import telebot
 import threading
 import time
 import pandas as pd
-import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
@@ -64,18 +63,21 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_ticker, interval="15min"):
-    # جلب أسعار الذهب الحقيقية (XAUUSD Spot / Futures) بشكل مباشر
+    # جلب سعر الذهب الفوري Spot (XAU/USD) ليتطابق مع MetaTrader
     if symbol_ticker == "XAUUSD":
         try:
-            tf_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "1h"}
-            ticker_data = yf.Ticker("GC=F")
-            data = ticker_data.history(period="5d", interval=tf_map.get(interval, "15m"))
-            if not data.empty:
-                df = data.reset_index()
-                df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+            url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=" + ("15m" if interval=="15min" else ("30m" if interval=="30min" else ("1h" if interval=="1hour" else "4h")))
+            res = session.get(url, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                df = pd.DataFrame(data, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume', 'close_time', 'q_vol', 'num_trades', 'tb_base', 'tb_quote', 'ignore'])
+                df['Open'] = df['Open'].astype(float)
+                df['Close'] = df['Close'].astype(float)
+                df['High'] = df['High'].astype(float)
+                df['Low'] = df['Low'].astype(float)
                 return df
         except Exception as e:
-            print(f"Fetch XAUUSD Error: {e}")
+            print(f"Fetch Gold Spot Error: {e}")
 
     # للبيتكوين واليورو عبر منصة KuCoin
     try:
@@ -160,17 +162,17 @@ def analyze_smc_setup(symbol_key):
     signal = "NONE"
     demand_str, supply_str = "غير محددة", "غير محددة"
     demand_low, supply_high = 0.0, 0.0
-    
-    # تحسين نطاق السماحية (Buffer) لضمان تفعيل التنبيه عند اقتراب السعر من المنطقة
-    buffer = 0.0008 if symbol_key == "اليورو" else (5.0 if symbol_key == "الذهب" else 200.0)
 
+    buffer = 0.0005 if symbol_key == "اليورو" else (2.0 if symbol_key == "الذهب" else 100.0)
     confidence = 65
 
+    # فلترة عالية الجودة لزيادة نجاح الصفقات (High Win Rate Filters)
     if bullish_ob:
         demand_low, demand_high = round(float(bullish_ob[0]), decimals), round(float(bullish_ob[1]), decimals)
         demand_str = f"{demand_low} ⟷ {demand_high}"
         if current_price <= (demand_high + buffer) and current_price >= (demand_low - buffer):
-            if has_bullish_bos or trend_1h == "BULLISH":
+            # يشترط وجود تأكيد اتجاه أو كسر هيكل واضح
+            if (has_bullish_bos or "صاعد" in trend_30m) and trend_1h != "BEARISH":
                 signal = "BUY"
                 if "صاعد" in trend_30m: confidence += 10
                 if trend_1h == "BULLISH": confidence += 10
@@ -181,7 +183,7 @@ def analyze_smc_setup(symbol_key):
         supply_low, supply_high = round(float(bearish_ob[0]), decimals), round(float(bearish_ob[1]), decimals)
         supply_str = f"{supply_low} ⟷ {supply_high}"
         if current_price >= (supply_low - buffer) and current_price <= (supply_high + buffer):
-            if has_bearish_bos or trend_1h == "BEARISH":
+            if (has_bearish_bos or "هابط" in trend_30m) and trend_1h != "BULLISH":
                 signal = "SELL"
                 if "هابط" in trend_30m: confidence += 10
                 if trend_1h == "BEARISH": confidence += 10
@@ -215,7 +217,7 @@ def background_monitor():
                         price = analysis["price"]
                         users = get_alert_users()
                         decimals = 5 if name == "اليورو" else 2
-                        sl_offset = 0.0008 if name == "اليورو" else (3.0 if name == "الذهب" else 250.0)
+                        sl_offset = 0.0008 if name == "اليورو" else (2.5 if name == "الذهب" else 250.0)
 
                         if current_state == "BUY":
                             sl = round(analysis["demand_low"] - sl_offset, decimals)
