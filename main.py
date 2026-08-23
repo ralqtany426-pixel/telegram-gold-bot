@@ -64,32 +64,48 @@ def get_alert_users():
 
 def fetch_klines(symbol_ticker, interval="15min"):
     if symbol_ticker == "XAUUSD":
-        # جلب أسعار الذهب المباشرة (Spot Gold) لتفادي قفزات أسعار العقود الآجلة في ياهو
-        interval_map = {
+        # تحويل الفريمات إلى الصيغة المقبولة في Binance API
+        binance_intervals = {
             "15min": "15m",
             "30min": "30m",
             "1hour": "1h",
             "4hour": "4h",
             "1day": "1d"
         }
-        tf = interval_map.get(interval, "15m")
+        tf = binance_intervals.get(interval, "15m")
+        
+        # المصدر الأول: Binance PAXG Spot
         try:
             url = f"https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval={tf}&limit=50"
             res = session.get(url, timeout=5)
             if res.status_code == 200:
                 data = res.json()
-                df = pd.DataFrame(data, columns=[
-                    'time', 'Open', 'High', 'Low', 'Close', 'Vol', 
-                    'CloseTime', 'Qav', 'NumTrades', 'Tbk', 'Tbq', 'Ignore'
-                ])
-                df['Open'] = df['Open'].astype(float)
-                df['High'] = df['High'].astype(float)
-                df['Low'] = df['Low'].astype(float)
-                df['Close'] = df['Close'].astype(float)
-                return df[['Open', 'High', 'Low', 'Close']].reset_index(drop=True)
+                if isinstance(data, list) and len(data) > 0:
+                    df = pd.DataFrame(data, columns=[
+                        'time', 'Open', 'High', 'Low', 'Close', 'Vol', 
+                        'CloseTime', 'Qav', 'NumTrades', 'Tbk', 'Tbq', 'Ignore'
+                    ])
+                    df['Open'] = df['Open'].astype(float)
+                    df['High'] = df['High'].astype(float)
+                    df['Low'] = df['Low'].astype(float)
+                    df['Close'] = df['Close'].astype(float)
+                    return df[['Open', 'High', 'Low', 'Close']].reset_index(drop=True)
         except Exception as e:
-            print(f"Fetch Spot Gold Error: {e}")
+            print(f"Fetch Gold Binance Error: {e}")
 
+        # المصدر الثاني (احتياطي): Coingecko Gold
+        try:
+            url_alt = "https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd"
+            res_alt = session.get(url_alt, timeout=5)
+            if res_alt.status_code == 200:
+                price = res_alt.json().get('pax-gold', {}).get('usd')
+                if price:
+                    data = {'Open': [price]*10, 'High': [price]*10, 'Low': [price]*10, 'Close': [price]*10}
+                    return pd.DataFrame(data)
+        except Exception as e:
+            print(f"Fetch Gold Fallback Error: {e}")
+
+    # الكريبتو والعملات عبر KuCoin
     try:
         url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol_ticker}&type={interval}"
         res = session.get(url, timeout=5)
@@ -159,7 +175,7 @@ def scan_high_winrate_signals(symbol_key):
             fvg_status = f"Bearish FVG 🔴 ({round(df['High'].iloc[i], decimals)} - {round(df['Low'].iloc[i-2], decimals)})"
             break
 
-    # 2. استخراج مناطق العرض والطلب الديناميكية المعالجة من الكسر
+    # 2. استخراج مناطق العرض والطلب
     valid_lows = [df['Low'].iloc[i] for i in range(len(df)-15, len(df)) if df['Low'].iloc[i] < current_price]
     if valid_lows:
         demand_low = min(valid_lows)
