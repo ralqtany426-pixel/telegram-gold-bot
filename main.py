@@ -11,7 +11,7 @@ from flask import Flask, request
 from telebot import types
 
 TOKEN = '8982114650:AAH9EVAcP9bJnm_3VC72J_o7vMpfTlim2W4'
-bot = telebot.TeleBot(TOKEN)
+bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 SYMBOLS = {
@@ -36,108 +36,69 @@ def init_db():
 init_db()
 
 def add_user(chat_id):
-    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('INSERT OR IGNORE INTO users (chat_id, alerts) VALUES (?, 1)', (chat_id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('bot_users.db', check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR IGNORE INTO users (chat_id, alerts) VALUES (?, 1)', (chat_id,))
+        conn.commit()
+        conn.close()
+    except:
+        pass
 
 def get_alert_users():
-    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('SELECT chat_id FROM users WHERE alerts = 1')
-    users = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return users
-
-def fetch_data(symbol, tf, period="60d"):
     try:
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(period=period, interval=tf)
+        conn = sqlite3.connect('bot_users.db', check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute('SELECT chat_id FROM users WHERE alerts = 1')
+        users = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return users
+    except:
+        return []
+
+def fetch_data(symbol, tf, period="30d"):
+    try:
+        df = yf.download(symbol, period=period, interval=tf, progress=False)
         if df.empty and symbol == "GC=F":
-            ticker = yf.Ticker("XAUUSD=X")
-            df = ticker.history(period=period, interval=tf)
+            df = yf.download("XAUUSD=X", period=period, interval=tf, progress=False)
         return df
     except:
         return pd.DataFrame()
 
 def get_main_trend_200(symbol):
-    df_4h = fetch_data(symbol, "1h", "60d")
-    if df_4h.empty or len(df_4h) < 200:
+    df_4h = fetch_data(symbol, "1h", "30d")
+    if df_4h.empty or len(df_4h) < 100:
         return "NEUTRAL"
-    ema200 = df_4h['Close'].ewm(span=200, adjust=False).mean().iloc[-1]
-    current_price = df_4h['Close'].iloc[-1]
+    close_prices = df_4h['Close'].squeeze()
+    ema200 = close_prices.ewm(span=200, adjust=False).mean().iloc[-1]
+    current_price = close_prices.iloc[-1]
     return "BULLISH" if current_price > ema200 else "BEARISH"
 
-# --- محرك SMC الاحترافي ---
 def analyze_smc_setup(symbol):
-    df_15m = fetch_data(symbol, "15m", "5d")
-    df_1h = fetch_data(symbol, "1h", "20d")
+    df_15m = fetch_data(symbol, "15m", "3d")
+    df_1h = fetch_data(symbol, "1h", "10d")
 
-    if df_15m.empty or df_1h.empty or len(df_1h) < 30:
+    if df_15m.empty or df_1h.empty:
         return None
 
-    current_price = round(df_15m['Close'].iloc[-1], 4 if "EURUSD" in symbol else 2)
+    close_15m = df_15m['Close'].squeeze()
+    current_price = round(float(close_15m.iloc[-1]), 4 if "EURUSD" in symbol else 2)
     main_trend = get_main_trend_200(symbol)
 
-    if "EURUSD" in symbol:
-        buffer = 0.0003
-    elif "BTC" in symbol:
-        buffer = 150.0
-    else:
-        buffer = 1.0
+    buffer = 0.0003 if "EURUSD" in symbol else (150.0 if "BTC" in symbol else 1.0)
 
-    df_1h['swing_high'] = (df_1h['High'] > df_1h['High'].shift(1)) & (df_1h['High'] > df_1h['High'].shift(2)) & \
-                          (df_1h['High'] > df_1h['High'].shift(-1)) & (df_1h['High'] > df_1h['High'].shift(-2))
-    df_1h['swing_low'] = (df_1h['Low'] < df_1h['Low'].shift(1)) & (df_1h['Low'] < df_1h['Low'].shift(2)) & \
-                         (df_1h['Low'] < df_1h['Low'].shift(-1)) & (df_1h['Low'] < df_1h['Low'].shift(-2))
+    high_1h = df_1h['High'].squeeze()
+    low_1h = df_1h['Low'].squeeze()
 
-    demand_low, demand_high = None, None
-    supply_low, supply_high = None, None
-
-    for i in range(len(df_1h)-3, 5, -1):
-        if df_1h['swing_high'].iloc[i]:
-            last_high = df_1h['High'].iloc[i]
-            if (df_1h['Close'].iloc[i+1:] > last_high).any():
-                ob_candidates = df_1h.iloc[i-5:i+1]
-                red_candles = ob_candidates[ob_candidates['Close'] < ob_candidates['Open']]
-                if not red_candles.empty:
-                    last_ob = red_candles.iloc[-1]
-                    demand_low = round(last_ob['Low'], 4 if "EURUSD" in symbol else 2)
-                    demand_high = round(last_ob['High'], 4 if "EURUSD" in symbol else 2)
-                    break
-
-    for i in range(len(df_1h)-3, 5, -1):
-        if df_1h['swing_low'].iloc[i]:
-            last_low = df_1h['Low'].iloc[i]
-            if (df_1h['Close'].iloc[i+1:] < last_low).any():
-                ob_candidates = df_1h.iloc[i-5:i+1]
-                green_candles = ob_candidates[ob_candidates['Close'] > ob_candidates['Open']]
-                if not green_candles.empty:
-                    last_ob = green_candles.iloc[-1]
-                    supply_high = round(last_ob['High'], 4 if "EURUSD" in symbol else 2)
-                    supply_low = round(last_ob['Low'], 4 if "EURUSD" in symbol else 2)
-                    break
-
-    if demand_low is None:
-        demand_low = round(df_1h['Low'].iloc[-20:].min(), 4 if "EURUSD" in symbol else 2)
-        demand_high = round(demand_low + (buffer * 3), 4 if "EURUSD" in symbol else 2)
-    if supply_high is None:
-        supply_high = round(df_1h['High'].iloc[-20:].max(), 4 if "EURUSD" in symbol else 2)
-        supply_low = round(supply_high - (buffer * 3), 4 if "EURUSD" in symbol else 2)
-
-    has_fvg_buy = df_15m['Low'].iloc[-1] > df_15m['High'].iloc[-3]
-    has_fvg_sell = df_15m['High'].iloc[-1] < df_15m['Low'].iloc[-3]
-
-    signal_type = "NONE"
-    if ((demand_low - buffer) <= current_price <= (demand_high + buffer)) and has_fvg_buy and (main_trend == "BULLISH"):
-        signal_type = "BUY"
-    elif ((supply_low - buffer) <= current_price <= (supply_high + buffer)) and has_fvg_sell and (main_trend == "BEARISH"):
-        signal_type = "SELL"
+    demand_low = round(float(low_1h.iloc[-15:].min()), 4 if "EURUSD" in symbol else 2)
+    demand_high = round(demand_low + (buffer * 3), 4 if "EURUSD" in symbol else 2)
+    
+    supply_high = round(float(high_1h.iloc[-15:].max()), 4 if "EURUSD" in symbol else 2)
+    supply_low = round(supply_high - (buffer * 3), 4 if "EURUSD" in symbol else 2)
 
     return {
         "price": current_price,
-        "signal": signal_type,
+        "signal": "NONE",
         "trend": main_trend,
         "demand": f"{demand_low} ⟷ {demand_high}",
         "supply": f"{supply_low} ⟷ {supply_high}",
@@ -146,7 +107,7 @@ def analyze_smc_setup(symbol):
     }
 
 def background_monitor():
-    time.sleep(10)
+    time.sleep(15)
     while True:
         try:
             for name, sym in SYMBOLS.items():
@@ -173,15 +134,14 @@ def background_monitor():
                             direction = "بيع (SELL) 📉"
 
                         msg = (
-                            f"🚨 **تنبيه SMC احترافي (BOS + OB) على {name}** 🚨\n"
+                            f"🚨 **تنبيه SMC احترافي على {name}** 🚨\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n"
                             f"📌 الصفقة: {direction}\n"
                             f"📍 سعر الدخول: `{price}`\n"
-                            f"🧱 المنطقة المفعلة: `{analysis['demand'] if current_state == 'BUY' else analysis['supply']}`\n"
+                            f"🧱 المنطقة: `{analysis['demand'] if current_state == 'BUY' else analysis['supply']}`\n"
                             f"⛔ وقف الخسارة (SL): `{sl}`\n"
                             f"🎯 الهدف الأول (TP1): `{tp1}`\n"
-                            f"🎯 الهدف الثاني (TP2): `{tp2}`\n\n"
-                            f"💡 *نفذ الصفقة يدوياً من تطبيق MT5.*"
+                            f"🎯 الهدف الثاني (TP2): `{tp2}`"
                         )
 
                         for chat_id in users:
@@ -189,29 +149,24 @@ def background_monitor():
                                 bot.send_message(chat_id, msg, parse_mode="Markdown")
                             except:
                                 pass
-            time.sleep(60)
+            time.sleep(120)
         except Exception:
-            time.sleep(60)
+            time.sleep(120)
 
 threading.Thread(target=background_monitor, daemon=True).start()
 
-# --- ربط Webhook التلقائي مع Render ---
-external_url = os.environ.get("RENDER_EXTERNAL_URL")
-if external_url:
-    bot.remove_webhook()
-    time.sleep(1)
-    bot.set_webhook(url=f"{external_url}/{TOKEN}")
-
 @app.route('/')
 def home():
-    return "Advanced SMC Bot (BOS + OB) Active!", 200
+    return "Bot Active!", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
-    json_str = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return "!", 200
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    return 'Forbidden', 403
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -225,7 +180,6 @@ def start_command(message):
     welcome_text = (
         f"👑 **ماسح SMC المطور (BOS + OB + FVG)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم تطوير خوارزمية تحديد مناطق العرض والطلب لتطابق كسر الهيكل الحقيقي.\n"
         f"اختر الزوج لمعاينة تحليله اللحظي."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
@@ -237,26 +191,36 @@ def handle_text_messages(message):
     add_user(chat_id)
 
     if text in SYMBOLS:
-        wait_msg = bot.send_message(chat_id, f"⏳ جاري فحص هيكل السوق لـ {text}، يرجى الانتظار ثوانٍ...")
-
+        wait_msg = bot.send_message(chat_id, f"⏳ جاري فحص هيكل السوق لـ {text}...")
         symbol = SYMBOLS[text]
         analysis = analyze_smc_setup(symbol)
 
         if not analysis:
-            bot.edit_message_text(f"⚠️ تعذر جلب البيانات لـ {text} حالياً، حاول مجدداً.", chat_id, wait_msg.message_id)
+            bot.edit_message_text(f"⚠️ تعذر جلب البيانات لـ {text} حالياً.", chat_id, wait_msg.message_id)
             return
 
         trend_str = "📈 صاعد" if analysis['trend'] == "BULLISH" else "📉 هابط"
         msg = (
-            f"📊 **تقرير هيكل السوق المطور لـ ({text}):**\n"
+            f"📊 **تقرير هيكل السوق لـ ({text}):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🌐 الاتجاه العام (200 شمعة): `{trend_str}`\n"
+            f"🌐 الاتجاه العام: `{trend_str}`\n"
             f"📍 السعر الحالي: `{analysis['price']}`\n"
-            f"🧱 منطقة الطلب الحقيقية (Demand OB): `{analysis['demand']}`\n"
-            f"🧱 منطقة العرض الحقيقية (Supply OB): `{analysis['supply']}`\n"
+            f"🧱 منطقة الطلب (Demand): `{analysis['demand']}`\n"
+            f"🧱 منطقة العرض (Supply): `{analysis['supply']}`\n"
             f"⚡ الإشارة الحالية: `{analysis['signal']}`"
         )
         bot.edit_message_text(msg, chat_id, wait_msg.message_id, parse_mode="Markdown")
+
+def setup_webhook():
+    time.sleep(3)
+    external_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if external_url:
+        webhook_url = f"{external_url}/{TOKEN}"
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=webhook_url)
+
+threading.Thread(target=setup_webhook, daemon=True).start()
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
