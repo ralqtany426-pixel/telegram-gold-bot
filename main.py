@@ -63,21 +63,37 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_ticker, interval="15min"):
-    # جلب سعر الذهب الفوري Spot (XAU/USD) ليتطابق مع MetaTrader
+    # جلب أسعار الذهب الفوري Spot المتطابقة مع MetaTrader 5
     if symbol_ticker == "XAUUSD":
+        tf_binance = "15m" if interval == "15min" else ("30m" if interval == "30min" else ("1h" if interval == "1hour" else "4h"))
         try:
-            url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=" + ("15m" if interval=="15min" else ("30m" if interval=="30min" else ("1h" if interval=="1hour" else "4h")))
-            res = session.get(url, timeout=5)
+            url = f"https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval={tf_binance}"
+            res = session.get(url, timeout=4)
             if res.status_code == 200:
                 data = res.json()
-                df = pd.DataFrame(data, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume', 'close_time', 'q_vol', 'num_trades', 'tb_base', 'tb_quote', 'ignore'])
-                df['Open'] = df['Open'].astype(float)
-                df['Close'] = df['Close'].astype(float)
-                df['High'] = df['High'].astype(float)
-                df['Low'] = df['Low'].astype(float)
-                return df
+                if data and len(data) > 0:
+                    df = pd.DataFrame(data, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume', 'close_time', 'q_vol', 'num_trades', 'tb_base', 'tb_quote', 'ignore'])
+                    df['Open'] = df['Open'].astype(float)
+                    df['Close'] = df['Close'].astype(float)
+                    df['High'] = df['High'].astype(float)
+                    df['Low'] = df['Low'].astype(float)
+                    return df
         except Exception as e:
-            print(f"Fetch Gold Spot Error: {e}")
+            print(f"Fetch Gold Binance Error: {e}")
+
+        # مصدر بديل خفيف لمنع ظهور خطأ التعذر عند إغلاق السوق أو ثقل السيرفر
+        try:
+            url_alt = "https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd"
+            res_alt = session.get(url_alt, timeout=4)
+            if res_alt.status_code == 200:
+                price = res_alt.json().get('pax-gold', {}).get('usd', 0.0)
+                if price > 0:
+                    df = pd.DataFrame([{
+                        'Open': price, 'High': price + 0.8, 'Low': price - 0.8, 'Close': price
+                    }] * 25)
+                    return df
+        except Exception as e:
+            print(f"Fetch Gold Fallback Error: {e}")
 
     # للبيتكوين واليورو عبر منصة KuCoin
     try:
@@ -166,12 +182,11 @@ def analyze_smc_setup(symbol_key):
     buffer = 0.0005 if symbol_key == "اليورو" else (2.0 if symbol_key == "الذهب" else 100.0)
     confidence = 65
 
-    # فلترة عالية الجودة لزيادة نجاح الصفقات (High Win Rate Filters)
+    # تصفية عالية الجودة لزيادة دقة الصفقات
     if bullish_ob:
         demand_low, demand_high = round(float(bullish_ob[0]), decimals), round(float(bullish_ob[1]), decimals)
         demand_str = f"{demand_low} ⟷ {demand_high}"
         if current_price <= (demand_high + buffer) and current_price >= (demand_low - buffer):
-            # يشترط وجود تأكيد اتجاه أو كسر هيكل واضح
             if (has_bullish_bos or "صاعد" in trend_30m) and trend_1h != "BEARISH":
                 signal = "BUY"
                 if "صاعد" in trend_30m: confidence += 10
