@@ -8,9 +8,14 @@ import pandas as pd
 from flask import Flask, request
 from telebot import types
 
-TOKEN = '8982114650:AAH9EVAcP9bJnm_3VC72J_o7vMpfTlim2W4'
+TOKEN = os.environ.get("BOT_TOKEN", '8982114650:AAH9EVAcP9bJnm_3VC72J_o7vMpfTlim2W4')
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
+
+session = requests.Session()
+session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+})
 
 SYMBOLS = {
     "البيتكوين ₿": "BTCUSDT",
@@ -40,8 +45,8 @@ def add_user(chat_id):
         cursor.execute('INSERT OR IGNORE INTO users (chat_id, alerts) VALUES (?, 1)', (chat_id,))
         conn.commit()
         conn.close()
-    except:
-        pass
+    except Exception as e:
+        print(f"Error adding user: {e}")
 
 def get_alert_users():
     try:
@@ -51,36 +56,45 @@ def get_alert_users():
         users = [row[0] for row in cursor.fetchall()]
         conn.close()
         return users
-    except:
+    except Exception as e:
+        print(f"Error fetching users: {e}")
         return []
 
-# جلب البيانات مع إضافة Headers لمنع الحظر من Render
+# جلب البيانات عبر عدة سيرفرات لمنع حظر Render
 def fetch_klines(symbol_ticker, interval="15m", limit=50):
-    try:
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={interval}&limit={limit}"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-        }
-        res = requests.get(url, headers=headers, timeout=5).json()
-        
-        if not isinstance(res, list):
-            return pd.DataFrame()
-        
-        df = pd.DataFrame(res, columns=[
-            'time', 'Open', 'High', 'Low', 'Close', 'Volume',
-            'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
-        ])
-        df['Open'] = df['Open'].astype(float)
-        df['High'] = df['High'].astype(float)
-        df['Low'] = df['Low'].astype(float)
-        df['Close'] = df['Close'].astype(float)
-        return df
-    except Exception as e:
-        return pd.DataFrame()
+    endpoints = [
+        f"https://api.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={interval}&limit={limit}",
+        f"https://api1.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={interval}&limit={limit}",
+        f"https://api2.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={interval}&limit={limit}",
+        f"https://api3.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={interval}&limit={limit}"
+    ]
+    
+    for url in endpoints:
+        try:
+            res = session.get(url, timeout=4)
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, list) and len(data) > 0:
+                    df = pd.DataFrame(data, columns=[
+                        'time', 'Open', 'High', 'Low', 'Close', 'Volume',
+                        'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
+                    ])
+                    df['Open'] = df['Open'].astype(float)
+                    df['High'] = df['High'].astype(float)
+                    df['Low'] = df['Low'].astype(float)
+                    df['Close'] = df['Close'].astype(float)
+                    return df
+        except Exception:
+            continue
+            
+    return pd.DataFrame()
 
 # تحليل مناطق SMC
 def analyze_smc_setup(symbol_key):
-    ticker = SYMBOLS[symbol_key]
+    ticker = SYMBOLS.get(symbol_key)
+    if not ticker:
+        return None
+
     df = fetch_klines(ticker, "15m", 50)
 
     if df.empty or len(df) < 20:
@@ -168,10 +182,11 @@ def background_monitor():
                         for chat_id in users:
                             try:
                                 bot.send_message(chat_id, msg, parse_mode="Markdown")
-                            except:
+                            except Exception:
                                 pass
             time.sleep(60)
-        except Exception:
+        except Exception as e:
+            print(f"Monitor error: {e}")
             time.sleep(60)
 
 threading.Thread(target=background_monitor, daemon=True).start()
@@ -208,18 +223,27 @@ def start_command(message):
 @bot.message_handler(func=lambda message: True)
 def handle_text_messages(message):
     chat_id = message.chat.id
-    text = message.text
+    text = message.text.strip() if message.text else ""
     add_user(chat_id)
 
-    if text in SYMBOLS:
-        analysis = analyze_smc_setup(text)
+    # التعرف المرن على الخيارات لمنع مشاكل اختلاف الإيموجي أو المسافات
+    selected_key = None
+    if "البيتكوين" in text:
+        selected_key = "البيتكوين ₿"
+    elif "الذهب" in text:
+        selected_key = "الذهب 🥇"
+    elif "اليورو" in text:
+        selected_key = "اليورو/دولار 💶"
+
+    if selected_key:
+        analysis = analyze_smc_setup(selected_key)
 
         if not analysis:
-            bot.send_message(chat_id, f"⚠️ تعذر جلب البيانات لـ {text} حالياً.")
+            bot.send_message(chat_id, f"⚠️ تعذر جلب البيانات لـ {text} حالياً. حاول مرة أخرى بعد لحظات.")
             return
 
         msg = (
-            f"📊 **تقرير SMC اللحظي لـ ({text}):**\n"
+            f"📊 **تقرير SMC اللحظي لـ ({selected_key}):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📍 السعر اللحظي: `{analysis['price']}`\n"
             f"🧱 منطقة الطلب (Demand/OB): `{analysis['demand']}`\n"
