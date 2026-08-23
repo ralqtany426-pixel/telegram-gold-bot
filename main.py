@@ -14,8 +14,9 @@ TOKEN = '8982114650:AAH9EVAcP9bJnm_3VC72J_o7vMpfTlim2W4'
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
+# تعديل الرمز إلى الذهب الفوري Spot Gold مقابل الدولار
 SYMBOLS = {
-    "الذهب 🥇": "GC=F",
+    "الذهب 🥇": "XAUUSD=X",
     "اليورو/دولار 💶": "EURUSD=X",
     "البيتكوين ₿": "BTC-USD"
 }
@@ -59,8 +60,8 @@ def get_alert_users():
 def fetch_data(symbol, tf, period="30d"):
     try:
         df = yf.download(symbol, period=period, interval=tf, progress=False)
-        if df.empty and symbol == "GC=F":
-            df = yf.download("XAUUSD=X", period=period, interval=tf, progress=False)
+        if df.empty and symbol == "XAUUSD=X":
+            df = yf.download("GC=F", period=period, interval=tf, progress=False)
         return df
     except:
         return pd.DataFrame()
@@ -92,7 +93,7 @@ def analyze_smc_setup(symbol):
 
     demand_low = round(float(low_1h.iloc[-15:].min()), 4 if "EURUSD" in symbol else 2)
     demand_high = round(demand_low + (buffer * 3), 4 if "EURUSD" in symbol else 2)
-    
+
     supply_high = round(float(high_1h.iloc[-15:].max()), 4 if "EURUSD" in symbol else 2)
     supply_low = round(supply_high - (buffer * 3), 4 if "EURUSD" in symbol else 2)
 
