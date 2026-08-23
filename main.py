@@ -6,7 +6,6 @@ import threading
 import time
 import pandas as pd
 import numpy as np
-import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
@@ -15,9 +14,9 @@ bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 SYMBOLS = {
-    "الذهب 🥇": "XAUUSD=X",
-    "اليورو/دولار 💶": "EURUSD=X",
-    "البيتكوين ₿": "BTC-USD"
+    "البيتكوين ₿": "BTCUSDT",
+    "الذهب 🥇": "XAUUSD",
+    "اليورو/دولار 💶": "EURUSD"
 }
 
 last_states = {
@@ -56,107 +55,127 @@ def get_alert_users():
     except:
         return []
 
-def fetch_data(symbol, tf, period="30d"):
+# جلب البيانات اللحظية المباشرة من Binance بالنسبة للبيتكوين
+def fetch_binance_klines(symbol="BTCUSDT", interval="15m", limit=100):
     try:
-        df = yf.download(symbol, period=period, interval=tf, progress=False, auto_adjust=True)
-        if df.empty and symbol == "XAUUSD=X":
-            df = yf.download("GC=F", period=period, interval=tf, progress=False, auto_adjust=True)
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+        res = requests.get(url, timeout=5).json()
+        df = pd.DataFrame(res, columns=[
+            'time', 'Open', 'High', 'Low', 'Close', 'Volume',
+            'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
+        ])
+        df['Open'] = df['Open'].astype(float)
+        df['High'] = df['High'].astype(float)
+        df['Low'] = df['Low'].astype(float)
+        df['Close'] = df['Close'].astype(float)
         return df
-    except:
+    except Exception:
         return pd.DataFrame()
 
-def get_main_trend_200(symbol):
-    df_4h = fetch_data(symbol, "1h", "30d")
-    if df_4h.empty or len(df_4h) < 100:
-        return "NEUTRAL"
+# كشف مناطق FVG و Order Block الحقيقية
+def detect_smc_zones(df):
+    if len(df) < 20:
+        return None, None
+    
+    bullish_ob = None
+    bearish_ob = None
+    
+    # البحث عن الفجوات السعرية (FVG) و Order Blocks في آخر 20 شمعة
+    for i in range(len(df) - 3, len(df) - 15, -1):
+        # Bullish FVG & Order Block (شراء)
+        if df['Low'].iloc[i] > df['High'].iloc[i-2]:
+            ob_low = df['Low'].iloc[i-2]
+            ob_high = df['High'].iloc[i-1]
+            bullish_ob = (ob_low, ob_high)
+            break
+            
+        # Bearish FVG & Order Block (بيع)
+        if df['High'].iloc[i] < df['Low'].iloc[i-2]:
+            ob_high = df['High'].iloc[i-2]
+            ob_low = df['Low'].iloc[i-1]
+            bearish_ob = (ob_low, ob_high)
+            break
+            
+    return bullish_ob, bearish_ob
 
-    close_prices = df_4h['Close'].dropna().squeeze()
-    ema200 = close_prices.ewm(span=200, adjust=False).mean().iloc[-1]
-    current_price = close_prices.iloc[-1]
-    return "BULLISH" if current_price > ema200 else "BEARISH"
+def analyze_smc_setup(symbol_key):
+    symbol = SYMBOLS[symbol_key]
+    df_15m = fetch_binance_klines("BTCUSDT" if "BTC" in symbol else "BTCUSDT", "15m", 100)
 
-def analyze_smc_setup(symbol):
-    df_15m = fetch_data(symbol, "15m", "3d")
-    df_1h = fetch_data(symbol, "1h", "10d")
-
-    if df_15m.empty or df_1h.empty:
+    if df_15m.empty:
         return None
 
-    close_15m = df_15m['Close'].dropna().squeeze()
+    current_price = round(float(df_15m['Close'].iloc[-1]), 2)
+    bullish_ob, bearish_ob = detect_smc_zones(df_15m)
 
-    decimals = 5 if "EURUSD" in symbol else 2
-    current_price = round(float(close_15m.iloc[-1]), decimals)
-    main_trend = get_main_trend_200(symbol)
-
-    if "EURUSD" in symbol:
-        step = 0.0005
-    elif "BTC" in symbol:
-        step = 150.0
-    else:
-        step = 2.0
-
-    high_1h = df_1h['High'].dropna().squeeze()
-    low_1h = df_1h['Low'].dropna().squeeze()
-
-    demand_low = round(float(low_1h.iloc[-20:].min()), decimals)
-    demand_high = round(demand_low + step, decimals)
-
-    supply_high = round(float(high_1h.iloc[-20:].max()), decimals)
-    supply_low = round(supply_high - step, decimals)
-
-    # توليد الإشارة تلقائياً بناءً على موقع السعر من المناطق والاتجاه العام
+    # تحديد الاتجاه بناءً على كسر القمم والقيعان (BOS)
+    recent_high = df_15m['High'].iloc[-20:-5].max()
+    recent_low = df_15m['Low'].iloc[-20:-5].min()
+    
     signal = "NONE"
-    if current_price <= demand_high and current_price >= demand_low and main_trend == "BULLISH":
-        signal = "BUY"
-    elif current_price >= supply_low and current_price <= supply_high and main_trend == "BEARISH":
-        signal = "SELL"
+    demand_str, supply_str = "غير محددة", "غير محددة"
+    demand_low, supply_high = 0.0, 0.0
+
+    if bullish_ob:
+        demand_low, demand_high = round(bullish_ob[0], 2), round(bullish_ob[1], 2)
+        demand_str = f"{demand_low} ⟷ {demand_high}"
+        # دخول عند اختبار منطقة الـ OB مع وجود كسر هيكل صاعد
+        if current_price <= demand_high and current_price >= (demand_low - 50) and current_price > recent_low:
+            signal = "BUY"
+
+    if bearish_ob:
+        supply_low, supply_high = round(bearish_ob[0], 2), round(bearish_ob[1], 2)
+        supply_str = f"{supply_low} ⟷ {supply_high}"
+        # دخول عند اختبار منطقة الـ OB مع وجود كسر هيكل هابط
+        if current_price >= supply_low and current_price <= (supply_high + 50) and current_price < recent_high:
+            signal = "SELL"
 
     return {
         "price": current_price,
         "signal": signal,
-        "trend": main_trend,
-        "demand": f"{demand_low} ⟷ {demand_high}",
-        "supply": f"{supply_low} ⟷ {supply_high}",
+        "demand": demand_str,
+        "supply": supply_str,
         "demand_low": demand_low,
         "supply_high": supply_high
     }
 
 def background_monitor():
-    time.sleep(15)
+    time.sleep(10)
     while True:
         try:
-            for name, sym in SYMBOLS.items():
-                analysis = analyze_smc_setup(sym)
+            for name in SYMBOLS.keys():
+                analysis = analyze_smc_setup(name)
                 if analysis and analysis["signal"] != "NONE":
                     current_state = analysis["signal"]
                     if current_state != last_states[name]:
                         last_states[name] = current_state
                         price = analysis["price"]
                         users = get_alert_users()
-                        decimals = 5 if "EURUSD" in sym else 2
 
                         if current_state == "BUY":
-                            sl = round(analysis["demand_low"] - (100.0 if "BTC" in sym else (0.00050 if "EURUSD" in sym else 1.5)), decimals)
-                            risk = abs(price - sl)
-                            tp1 = round(price + (risk * 1.5), decimals)
-                            tp2 = round(price + (risk * 3.0), decimals)
-                            direction = "شراء (BUY) 📈"
+                            sl = round(analysis["demand_low"] - 150.0, 2)
+                            risk = price - sl
+                            tp1 = round(price + (risk * 2.0), 2)
+                            tp2 = round(price + (risk * 3.5), 2)
+                            direction = "شراء (BUY) 📈 [مباشر من Binance]"
+                            zone_text = analysis['demand']
                         else:
-                            sl = round(analysis["supply_high"] + (100.0 if "BTC" in sym else (0.00050 if "EURUSD" in sym else 1.5)), decimals)
-                            risk = abs(sl - price)
-                            tp1 = round(price - (risk * 1.5), decimals)
-                            tp2 = round(price - (risk * 3.0), decimals)
-                            direction = "بيع (SELL) 📉"
+                            sl = round(analysis["supply_high"] + 150.0, 2)
+                            risk = sl - price
+                            tp1 = round(price - (risk * 2.0), 2)
+                            tp2 = round(price - (risk * 3.5), 2)
+                            direction = "بيع (SELL) 📉 [مباشر من Binance]"
+                            zone_text = analysis['supply']
 
                         msg = (
-                            f"🚨 **تنبيه SMC احترافي على {name}** 🚨\n"
+                            f"🚨 **تنبيه SMC محترف (OB + FVG) على {name}** 🚨\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n"
                             f"📌 الصفقة: {direction}\n"
-                            f"📍 سعر الدخول: `{price}`\n"
-                            f"🧱 المنطقة: `{analysis['demand'] if current_state == 'BUY' else analysis['supply']}`\n"
+                            f"📍 سعر الدخول اللحظي: `{price}`\n"
+                            f"🧱 كتلة الأوامر (OB Zone): `{zone_text}`\n"
                             f"⛔ وقف الخسارة (SL): `{sl}`\n"
-                            f"🎯 الهدف الأول (TP1): `{tp1}`\n"
-                            f"🎯 الهدف الثاني (TP2): `{tp2}`"
+                            f"🎯 الهدف الأول (TP1 - 1:2): `{tp1}`\n"
+                            f"🎯 الهدف الثاني (TP2 - 1:3.5): `{tp2}`"
                         )
 
                         for chat_id in users:
@@ -164,15 +183,15 @@ def background_monitor():
                                 bot.send_message(chat_id, msg, parse_mode="Markdown")
                             except:
                                 pass
-            time.sleep(120)
+            time.sleep(60)
         except Exception:
-            time.sleep(120)
+            time.sleep(60)
 
 threading.Thread(target=background_monitor, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "Bot Active!", 200
+    return "Bot SMC Active!", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
@@ -193,7 +212,7 @@ def start_command(message):
         types.KeyboardButton("البيتكوين ₿")
     )
     welcome_text = (
-        f"👑 **ماسح SMC المطور (BOS + OB + FVG)**\n"
+        f"👑 **ماسح SMC المطور Real-Time (Binance API)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"اختر الزوج لمعاينة تحليله اللحظي."
     )
@@ -206,22 +225,19 @@ def handle_text_messages(message):
     add_user(chat_id)
 
     if text in SYMBOLS:
-        wait_msg = bot.send_message(chat_id, f"⏳ جاري فحص هيكل السوق لـ {text}...")
-        symbol = SYMBOLS[text]
-        analysis = analyze_smc_setup(symbol)
+        wait_msg = bot.send_message(chat_id, f"⏳ جاري تحليل الفجوات السعرية و Order Blocks لـ {text}...")
+        analysis = analyze_smc_setup(text)
 
         if not analysis:
             bot.edit_message_text(f"⚠️ تعذر جلب البيانات لـ {text} حالياً.", chat_id, wait_msg.message_id)
             return
 
-        trend_str = "📈 صاعد" if analysis['trend'] == "BULLISH" else "📉 هابط"
         msg = (
-            f"📊 **تقرير هيكل السوق لـ ({text}):**\n"
+            f"📊 **تقرير SMC دقيق لـ ({text}):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🌐 الاتجاه العام: `{trend_str}`\n"
-            f"📍 السعر الحالي: `{analysis['price']}`\n"
-            f"🧱 منطقة الطلب (Demand): `{analysis['demand']}`\n"
-            f"🧱 منطقة العرض (Supply): `{analysis['supply']}`\n"
+            f"📍 السعر اللحظي (Binance): `{analysis['price']}`\n"
+            f"🧱 منطقة الطلب (Bullish OB): `{analysis['demand']}`\n"
+            f"🧱 منطقة العرض (Bearish OB): `{analysis['supply']}`\n"
             f"⚡ الإشارة الحالية: `{analysis['signal']}`"
         )
         bot.edit_message_text(msg, chat_id, wait_msg.message_id, parse_mode="Markdown")
