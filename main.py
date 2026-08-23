@@ -16,10 +16,10 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-# استخدام رموز أصلية ومضمونة للبيانات اللحظية
+# استخدام رموز أساسية
 SYMBOLS = {
     "البيتكوين": "BTC-USD",
-    "الذهب": "XAUUSD=X",
+    "الذهب": "GC=F",
     "اليورو": "EURUSD=X"
 }
 
@@ -69,37 +69,47 @@ def fetch_klines(symbol_ticker, interval="15min"):
     }
     tf, period = tf_map.get(interval, ("15m", "1d"))
 
-    # المحاولة الأولى: باستخدام yfinance المباشر
-    try:
-        ticker = yf.Ticker(symbol_ticker)
-        df = ticker.history(period=period, interval=tf)
-        if not df.empty and len(df) >= 3:
-            df = df.reset_index()
-            return df[['Open', 'High', 'Low', 'Close']]
-    except Exception as e:
-        print(f"yfinance method failed for {symbol_ticker}: {e}")
+    # رموز بديلة للذهب لضمان السحب المباشر دون انقطاع
+    tickers_to_try = [symbol_ticker]
+    if symbol_ticker in ["XAUUSD=X", "GC=F"]:
+        tickers_to_try = ["GC=F", "XAUUSD=X", "XAU-USD"]
 
-    # المحاولة الثانية: سحب البيانات المباشر عبر HTTP API كبديل لتفادي الحظر
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol_ticker}?range={period}&interval={tf}"
-        res = requests.get(url, headers=headers, timeout=10)
-        data = res.json()
-        
-        result = data['chart']['result'][0]
-        quote = result['indicators']['quote'][0]
-        
-        df = pd.DataFrame({
-            'Open': quote['open'],
-            'High': quote['high'],
-            'Low': quote['low'],
-            'Close': quote['close']
-        }).dropna()
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
 
-        if not df.empty and len(df) >= 3:
-            return df
-    except Exception as e:
-        print(f"Direct API fallback failed for {symbol_ticker}: {e}")
+    for current_symbol in tickers_to_try:
+        # المحاولة الأولى: API المباشر عبر HTTP لتفادي حظر المكتبة
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{current_symbol}?range={period}&interval={tf}"
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get('chart', {}).get('result'):
+                    result = data['chart']['result'][0]
+                    quote = result['indicators']['quote'][0]
+                    
+                    df = pd.DataFrame({
+                        'Open': quote['open'],
+                        'High': quote['high'],
+                        'Low': quote['low'],
+                        'Close': quote['close']
+                    }).dropna()
+
+                    if not df.empty and len(df) >= 3:
+                        return df
+        except Exception as e:
+            print(f"Direct API Error ({current_symbol}): {e}")
+
+        # المحاولة الثانية: استخدام yfinance كخيار احتياطي
+        try:
+            ticker = yf.Ticker(current_symbol)
+            df = ticker.history(period=period, interval=tf)
+            if not df.empty and len(df) >= 3:
+                df = df.reset_index()
+                return df[['Open', 'High', 'Low', 'Close']]
+        except Exception as e:
+            print(f"yfinance Error ({current_symbol}): {e}")
 
     return pd.DataFrame()
 
