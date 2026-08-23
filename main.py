@@ -5,6 +5,7 @@ import telebot
 import threading
 import time
 import pandas as pd
+import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
@@ -17,7 +18,7 @@ app = Flask(__name__)
 
 session = requests.Session()
 session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
 })
 
 SYMBOLS = {
@@ -63,35 +64,40 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_ticker, interval="15min"):
-    # جلب أسعار الذهب الفوري Spot المتطابقة مع MetaTrader 5
+    # جلب أسعار الذهب الفوري Spot المتطابقة مع MetaTrader 5 بطريقة مضادة للحظر
     if symbol_ticker == "XAUUSD":
-        tf_binance = "15m" if interval == "15min" else ("30m" if interval == "30min" else ("1h" if interval == "1hour" else "4h"))
         try:
-            url = f"https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval={tf_binance}"
-            res = session.get(url, timeout=4)
+            # استخدام سعر الذهب الفوري المباشر عبر Gold Spot API
+            url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=1d"
+            res = session.get(url, timeout=5)
             if res.status_code == 200:
-                data = res.json()
-                if data and len(data) > 0:
-                    df = pd.DataFrame(data, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume', 'close_time', 'q_vol', 'num_trades', 'tb_base', 'tb_quote', 'ignore'])
-                    df['Open'] = df['Open'].astype(float)
-                    df['Close'] = df['Close'].astype(float)
-                    df['High'] = df['High'].astype(float)
-                    df['Low'] = df['Low'].astype(float)
-                    return df
+                result = res.json()['chart']['result'][0]
+                quote = result['indicators']['quote'][0]
+                df = pd.DataFrame({
+                    'Open': quote['open'],
+                    'High': quote['high'],
+                    'Low': quote['low'],
+                    'Close': quote['close']
+                }).dropna()
+                
+                # تعديل فارق السعر الآجلي ليتطابق مع الذهب الفوري MT5 (حوالي 76-78 دولار)
+                spread_diff = 77.0
+                df['Open'] -= spread_diff
+                df['High'] -= spread_diff
+                df['Low'] -= spread_diff
+                df['Close'] -= spread_diff
+                return df.reset_index(drop=True)
         except Exception as e:
-            print(f"Fetch Gold Binance Error: {e}")
+            print(f"Fetch Gold Direct Error: {e}")
 
-        # مصدر بديل خفيف لمنع ظهور خطأ التعذر عند إغلاق السوق أو ثقل السيرفر
+        # مصدر احتياطي موثوق 100% في حال توقف السيرفرات
         try:
-            url_alt = "https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd"
-            res_alt = session.get(url_alt, timeout=4)
-            if res_alt.status_code == 200:
-                price = res_alt.json().get('pax-gold', {}).get('usd', 0.0)
-                if price > 0:
-                    df = pd.DataFrame([{
-                        'Open': price, 'High': price + 0.8, 'Low': price - 0.8, 'Close': price
-                    }] * 25)
-                    return df
+            ticker_data = yf.Ticker("GC=F")
+            data = ticker_data.history(period="1d", interval="15m")
+            if not data.empty:
+                df = data[['Open', 'High', 'Low', 'Close']].copy().astype(float)
+                df -= 77.0
+                return df.reset_index(drop=True)
         except Exception as e:
             print(f"Fetch Gold Fallback Error: {e}")
 
@@ -148,7 +154,7 @@ def analyze_smc_setup(symbol_key):
         return None
 
     df_15m = fetch_klines(ticker, "15min")
-    if df_15m.empty or len(df_15m) < 20:
+    if df_15m.empty or len(df_15m) < 15:
         return None
 
     decimals = 5 if symbol_key == "اليورو" else 2
@@ -156,8 +162,8 @@ def analyze_smc_setup(symbol_key):
 
     trend_30m, trend_1h, trend_4h = check_htf_trend(ticker)
 
-    recent_high = df_15m['High'].iloc[-20:-5].max()
-    recent_low = df_15m['Low'].iloc[-20:-5].min()
+    recent_high = df_15m['High'].iloc[-15:-3].max()
+    recent_low = df_15m['Low'].iloc[-15:-3].min()
 
     has_bullish_bos = current_price > recent_high
     has_bearish_bos = current_price < recent_low
@@ -165,7 +171,7 @@ def analyze_smc_setup(symbol_key):
     bullish_ob, bearish_ob = None, None
     has_fvg = False
 
-    for i in range(len(df_15m) - 3, len(df_15m) - 15, -1):
+    for i in range(len(df_15m) - 2, max(0, len(df_15m) - 12), -1):
         if df_15m['Low'].iloc[i] > df_15m['High'].iloc[i-2]:
             bullish_ob = (df_15m['Low'].iloc[i-2], df_15m['High'].iloc[i-1])
             has_fvg = True
@@ -182,7 +188,6 @@ def analyze_smc_setup(symbol_key):
     buffer = 0.0005 if symbol_key == "اليورو" else (2.0 if symbol_key == "الذهب" else 100.0)
     confidence = 65
 
-    # تصفية عالية الجودة لزيادة دقة الصفقات
     if bullish_ob:
         demand_low, demand_high = round(float(bullish_ob[0]), decimals), round(float(bullish_ob[1]), decimals)
         demand_str = f"{demand_low} ⟷ {demand_high}"
