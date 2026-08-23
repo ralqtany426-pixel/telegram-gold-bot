@@ -21,9 +21,9 @@ session.headers.update({
 })
 
 SYMBOLS = {
-    "البيتكوين": "BTC-USDT",
-    "الذهب": "XAUUSD",
-    "اليورو": "EUR-USDT"
+    "البيتكوين": "BTCUSDT",
+    "الذهب": "PAXGUSDT",
+    "اليورو": "EURUSDT"
 }
 
 last_alert_time = {
@@ -63,37 +63,27 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_ticker, interval="15min"):
-    # 1. معالجة الذهب عبر Binance PAXG
-    if symbol_ticker == "XAUUSD":
-        binance_tf = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}.get(interval, "15m")
-        try:
-            url = f"https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval={binance_tf}&limit=50"
-            res = session.get(url, timeout=5)
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, list) and len(data) > 0:
-                    df = pd.DataFrame(data, columns=['time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CloseTime', 'Qav', 'NumTrades', 'Tbk', 'Tbq', 'Ignore'])
-                    for col in ['Open', 'High', 'Low', 'Close']:
-                        df[col] = df[col].astype(float)
-                    return df[['Open', 'High', 'Low', 'Close']].reset_index(drop=True)
-        except Exception as e:
-            print(f"Fetch Gold Error: {e}")
-        return pd.DataFrame()
-
-    # 2. معالجة اليورو والبيتكوين عبر KuCoin
+    # توحيد جلب البيانات المباشرة والدقيقة عبر Binance API لجميع الأزواج
+    binance_tf = {
+        "15min": "15m", 
+        "30min": "30m", 
+        "1hour": "1h", 
+        "4hour": "4h", 
+        "1day": "1d"
+    }.get(interval, "15m")
+    
     try:
-        url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol_ticker}&type={interval}"
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={binance_tf}&limit=50"
         res = session.get(url, timeout=5)
         if res.status_code == 200:
-            data = res.json().get('data', [])
-            if data and len(data) > 0:
-                df = pd.DataFrame(data, columns=['time', 'Open', 'Close', 'High', 'Low', 'Volume', 'Turnover'])
-                for col in ['Open', 'Close', 'High', 'Low']:
+            data = res.json()
+            if isinstance(data, list) and len(data) > 0:
+                df = pd.DataFrame(data, columns=['time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CloseTime', 'Qav', 'NumTrades', 'Tbk', 'Tbq', 'Ignore'])
+                for col in ['Open', 'High', 'Low', 'Close']:
                     df[col] = df[col].astype(float)
-                df = df.iloc[::-1].reset_index(drop=True)
-                return df
+                return df[['Open', 'High', 'Low', 'Close']].reset_index(drop=True)
     except Exception as e:
-        print(f"Fetch KuCoin Error ({symbol_ticker} - {interval}): {e}")
+        print(f"Fetch Binance Error ({symbol_ticker} - {interval}): {e}")
 
     return pd.DataFrame()
 
@@ -333,7 +323,6 @@ def handle_text_messages(message):
             bot.send_message(chat_id, "⏳ **لا توجد صفقات VIP ناضجة حالياً.**\nيتم فحص السوق كل دقيقة وسيتم إرسال تنبيه فور توفر الفرصة.")
         return
 
-    # المطابقة الشاملة لأزرار الكيبورد
     selected_key = None
     if "بيتكوين" in text or "BTC" in text.upper():
         selected_key = "البيتكوين"
