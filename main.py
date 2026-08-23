@@ -63,49 +63,24 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_ticker, interval="15min"):
+    # 1. معالجة الذهب عبر Binance PAXG
     if symbol_ticker == "XAUUSD":
-        # تحويل الفريمات إلى الصيغة المقبولة في Binance API
-        binance_intervals = {
-            "15min": "15m",
-            "30min": "30m",
-            "1hour": "1h",
-            "4hour": "4h",
-            "1day": "1d"
-        }
-        tf = binance_intervals.get(interval, "15m")
-        
-        # المصدر الأول: Binance PAXG Spot
+        binance_tf = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}.get(interval, "15m")
         try:
-            url = f"https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval={tf}&limit=50"
+            url = f"https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval={binance_tf}&limit=50"
             res = session.get(url, timeout=5)
             if res.status_code == 200:
                 data = res.json()
                 if isinstance(data, list) and len(data) > 0:
-                    df = pd.DataFrame(data, columns=[
-                        'time', 'Open', 'High', 'Low', 'Close', 'Vol', 
-                        'CloseTime', 'Qav', 'NumTrades', 'Tbk', 'Tbq', 'Ignore'
-                    ])
-                    df['Open'] = df['Open'].astype(float)
-                    df['High'] = df['High'].astype(float)
-                    df['Low'] = df['Low'].astype(float)
-                    df['Close'] = df['Close'].astype(float)
+                    df = pd.DataFrame(data, columns=['time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CloseTime', 'Qav', 'NumTrades', 'Tbk', 'Tbq', 'Ignore'])
+                    for col in ['Open', 'High', 'Low', 'Close']:
+                        df[col] = df[col].astype(float)
                     return df[['Open', 'High', 'Low', 'Close']].reset_index(drop=True)
         except Exception as e:
-            print(f"Fetch Gold Binance Error: {e}")
+            print(f"Fetch Gold Error: {e}")
+        return pd.DataFrame()
 
-        # المصدر الثاني (احتياطي): Coingecko Gold
-        try:
-            url_alt = "https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd"
-            res_alt = session.get(url_alt, timeout=5)
-            if res_alt.status_code == 200:
-                price = res_alt.json().get('pax-gold', {}).get('usd')
-                if price:
-                    data = {'Open': [price]*10, 'High': [price]*10, 'Low': [price]*10, 'Close': [price]*10}
-                    return pd.DataFrame(data)
-        except Exception as e:
-            print(f"Fetch Gold Fallback Error: {e}")
-
-    # الكريبتو والعملات عبر KuCoin
+    # 2. معالجة اليورو والبيتكوين عبر KuCoin
     try:
         url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol_ticker}&type={interval}"
         res = session.get(url, timeout=5)
@@ -113,10 +88,8 @@ def fetch_klines(symbol_ticker, interval="15min"):
             data = res.json().get('data', [])
             if data and len(data) > 0:
                 df = pd.DataFrame(data, columns=['time', 'Open', 'Close', 'High', 'Low', 'Volume', 'Turnover'])
-                df['Open'] = df['Open'].astype(float)
-                df['Close'] = df['Close'].astype(float)
-                df['High'] = df['High'].astype(float)
-                df['Low'] = df['Low'].astype(float)
+                for col in ['Open', 'Close', 'High', 'Low']:
+                    df[col] = df[col].astype(float)
                 df = df.iloc[::-1].reset_index(drop=True)
                 return df
     except Exception as e:
@@ -125,7 +98,6 @@ def fetch_klines(symbol_ticker, interval="15min"):
     return pd.DataFrame()
 
 def get_market_trend(ticker):
-    """تحليل اتجاه السوق وتوافقه على الفريمات"""
     df_1d = fetch_klines(ticker, "1day")
     df_4h = fetch_klines(ticker, "4hour")
     df_1h = fetch_klines(ticker, "1hour")
@@ -166,7 +138,6 @@ def scan_high_winrate_signals(symbol_key):
     bullish_ob, bearish_ob = None, None
     fvg_status = "غير متوفر"
 
-    # 1. كشف الفجوة السعرية (FVG) المحققة حديثاً
     for i in range(len(df) - 1, 2, -1):
         if df['Low'].iloc[i] > df['High'].iloc[i-2]:
             fvg_status = f"Bullish FVG 🟢 ({round(df['High'].iloc[i-2], decimals)} - {round(df['Low'].iloc[i], decimals)})"
@@ -175,7 +146,6 @@ def scan_high_winrate_signals(symbol_key):
             fvg_status = f"Bearish FVG 🔴 ({round(df['High'].iloc[i], decimals)} - {round(df['Low'].iloc[i-2], decimals)})"
             break
 
-    # 2. استخراج مناطق العرض والطلب
     valid_lows = [df['Low'].iloc[i] for i in range(len(df)-15, len(df)) if df['Low'].iloc[i] < current_price]
     if valid_lows:
         demand_low = min(valid_lows)
@@ -189,9 +159,9 @@ def scan_high_winrate_signals(symbol_key):
         bearish_ob = (round(supply_low, decimals), round(supply_high, decimals))
 
     if not bullish_ob:
-        bullish_ob = (round(current_price - 4.0, decimals), round(current_price - 1.5, decimals))
+        bullish_ob = (round(current_price - (0.0020 if symbol_key == "اليورو" else 4.0), decimals), round(current_price - (0.0008 if symbol_key == "اليورو" else 1.5), decimals))
     if not bearish_ob:
-        bearish_ob = (round(current_price + 1.5, decimals), round(current_price + 4.0, decimals))
+        bearish_ob = (round(current_price + (0.0008 if symbol_key == "اليورو" else 1.5), decimals), round(current_price + (0.0020 if symbol_key == "اليورو" else 4.0), decimals))
 
     signal = "NONE"
     setup_type = ""
@@ -240,26 +210,25 @@ def background_monitor():
                             tp1 = round(price + (risk * 1.8), decimals)
                             tp2 = round(price + (risk * 3.2), decimals)
                             tp3 = round(price + (risk * 5.0), decimals)
-                            action_text = "📈 شراء مؤكد VIP (FULL TIMEFRAME & SMC MATCH)"
+                            action_text = "📈 شراء مؤكد VIP"
                         else:
                             sl = round(analysis["supply_high"] + sl_offset, decimals)
                             risk = abs(sl - price)
                             tp1 = round(price - (risk * 1.8), decimals)
                             tp2 = round(price - (risk * 3.2), decimals)
                             tp3 = round(price - (risk * 5.0), decimals)
-                            action_text = "📉 بيع مؤكد VIP (FULL TIMEFRAME & SMC MATCH)"
+                            action_text = "📉 بيع مؤكد VIP"
 
                         msg = (
-                            f"🎯🔥 **تنبيه صفقة مكتملة الشروط (1m-30m Scanner)** 🔥🎯\n"
+                            f"🎯🔥 **تنبيه صفقة مكتملة الشروط** 🔥🎯\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n"
                             f"📌 **الزوج:** {name}\n"
                             f"🚨 **الإشارة:** {action_text}\n"
-                            f"💡 **السبب:** {analysis['setup_type']}\n"
                             f"📍 **سعر الدخول:** `{price}` $\n\n"
                             f"🧱 **منطقة الطلب / OB:** `{analysis['demand']}`\n"
                             f"🧱 **منطقة العرض / OB:** `{analysis['supply']}`\n"
                             f"📐 **الفجوة السعرية (FVG):** {analysis['fvg']}\n"
-                            f"🌐 **اتساق جميع الفريمات:** {analysis['trend']}\n\n"
+                            f"🌐 **اتساق الفريمات:** {analysis['trend']}\n\n"
                             f"⛔ **وقف الخسارة (SL):** `{sl}` $\n"
                             f"🎯 **هدف 1:** `{tp1}` $\n"
                             f"🎯 **هدف 2:** `{tp2}` $\n"
@@ -307,7 +276,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم تحديث سيرفر الأسعار للربط اللحظي المباشر ومطابقة الشارت بنسبة 100%."
+        f"تم تعديل سيرفر الأسعار للربط المباشر لجميع الأزواج بنجاح."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
@@ -348,7 +317,6 @@ def handle_text_messages(message):
                     f"⭐ **صفقة VIP متوفرة الآن - {key}** ⭐\n"
                     f"━━━━━━━━━━━━━━━━━━━━━\n"
                     f"📌 **التوجيه:** {action_text}\n"
-                    f"💡 **السبب:** {analysis['setup_type']}\n"
                     f"📍 **سعر الدخول:** `{price}` $\n\n"
                     f"🧱 **الأوردر بلوك / منطقة الطلب:** `{analysis['demand']}`\n"
                     f"🧱 **الأوردر بلوك / منطقة العرض:** `{analysis['supply']}`\n"
@@ -365,19 +333,21 @@ def handle_text_messages(message):
             bot.send_message(chat_id, "⏳ **لا توجد صفقات VIP ناضجة حالياً.**\nيتم فحص السوق كل دقيقة وسيتم إرسال تنبيه فور توفر الفرصة.")
         return
 
+    # المطابقة الشاملة لأزرار الكيبورد
     selected_key = None
-    if "البيتكوين" in text or "BTC" in text.upper():
+    if "بيتكوين" in text or "BTC" in text.upper():
         selected_key = "البيتكوين"
-    elif "الذهب" in text or "XAU" in text.upper() or "🥇" in text:
+    elif "ذهب" in text or "XAU" in text.upper() or "🥇" in text:
         selected_key = "الذهب"
-    elif "اليورو" in text or "EUR" in text.upper() or "💶" in text:
+    elif "يورو" in text or "EUR" in text.upper() or "💶" in text:
         selected_key = "اليورو"
 
     if selected_key:
+        bot.send_message(chat_id, f"🔄 **جاري جلب بيانات {selected_key}...**")
         analysis = scan_high_winrate_signals(selected_key)
 
         if not analysis:
-            bot.send_message(chat_id, f"⚠️ تعذر جلب البيانات لـ {text} حالياً.")
+            bot.send_message(chat_id, f"⚠️ تعذر جلب البيانات لـ {selected_key} حالياً.")
             return
 
         pair_name = "XAU/USD (الذهب)" if selected_key == "الذهب" else ("EUR/USD (اليورو)" if selected_key == "اليورو" else "BTC/USDT (البيتكوين)")
