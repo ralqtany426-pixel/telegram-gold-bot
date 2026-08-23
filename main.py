@@ -14,7 +14,6 @@ TOKEN = '8982114650:AAH9EVAcP9bJnm_3VC72J_o7vMpfTlim2W4'
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-# تعديل الرمز إلى الذهب الفوري Spot Gold مقابل الدولار
 SYMBOLS = {
     "الذهب 🥇": "XAUUSD=X",
     "اليورو/دولار 💶": "EURUSD=X",
@@ -86,16 +85,22 @@ def analyze_smc_setup(symbol):
     current_price = round(float(close_15m.iloc[-1]), 4 if "EURUSD" in symbol else 2)
     main_trend = get_main_trend_200(symbol)
 
-    buffer = 0.0003 if "EURUSD" in symbol else (150.0 if "BTC" in symbol else 1.0)
+    # تحديد سُمك المنطقة بأسلوب دقيق لكل زوج
+    if "EURUSD" in symbol:
+        step = 0.0005
+    elif "BTC" in symbol:
+        step = 20.0
+    else:
+        step = 1.5
 
     high_1h = df_1h['High'].squeeze()
     low_1h = df_1h['Low'].squeeze()
 
-    demand_low = round(float(low_1h.iloc[-15:].min()), 4 if "EURUSD" in symbol else 2)
-    demand_high = round(demand_low + (buffer * 3), 4 if "EURUSD" in symbol else 2)
+    demand_low = round(float(low_1h.iloc[-20:].min()), 4 if "EURUSD" in symbol else 2)
+    demand_high = round(demand_low + step, 4 if "EURUSD" in symbol else 2)
 
-    supply_high = round(float(high_1h.iloc[-15:].max()), 4 if "EURUSD" in symbol else 2)
-    supply_low = round(supply_high - (buffer * 3), 4 if "EURUSD" in symbol else 2)
+    supply_high = round(float(high_1h.iloc[-20:].max()), 4 if "EURUSD" in symbol else 2)
+    supply_low = round(supply_high - step, 4 if "EURUSD" in symbol else 2)
 
     return {
         "price": current_price,
@@ -122,13 +127,13 @@ def background_monitor():
                         decimals = 4 if "EURUSD" in sym else 2
 
                         if current_state == "BUY":
-                            sl = round(analysis["demand_low"] - (150.0 if "BTC" in sym else (0.0010 if "EURUSD" in sym else 1.0)), decimals)
+                            sl = round(analysis["demand_low"] - (100.0 if "BTC" in sym else (0.0010 if "EURUSD" in sym else 2.0)), decimals)
                             risk = price - sl
                             tp1 = round(price + (risk * 1.5), decimals)
                             tp2 = round(price + (risk * 3.0), decimals)
                             direction = "شراء (BUY) 📈"
                         else:
-                            sl = round(analysis["supply_high"] + (150.0 if "BTC" in sym else (0.0010 if "EURUSD" in sym else 1.0)), decimals)
+                            sl = round(analysis["supply_high"] + (100.0 if "BTC" in sym else (0.0010 if "EURUSD" in sym else 2.0)), decimals)
                             risk = sl - price
                             tp1 = round(price - (risk * 1.5), decimals)
                             tp2 = round(price - (risk * 3.0), decimals)
