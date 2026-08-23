@@ -58,9 +58,10 @@ def get_alert_users():
 
 def fetch_data(symbol, tf, period="30d"):
     try:
-        df = yf.download(symbol, period=period, interval=tf, progress=False)
+        # تعديل لضمان استدعاء البيانات وتحديث الشموع الأخيرة
+        df = yf.download(symbol, period=period, interval=tf, progress=False, auto_adjust=True)
         if df.empty and symbol == "XAUUSD=X":
-            df = yf.download("GC=F", period=period, interval=tf, progress=False)
+            df = yf.download("GC=F", period=period, interval=tf, progress=False, auto_adjust=True)
         return df
     except:
         return pd.DataFrame()
@@ -69,7 +70,8 @@ def get_main_trend_200(symbol):
     df_4h = fetch_data(symbol, "1h", "30d")
     if df_4h.empty or len(df_4h) < 100:
         return "NEUTRAL"
-    close_prices = df_4h['Close'].squeeze()
+    
+    close_prices = df_4h['Close'].dropna().squeeze()
     ema200 = close_prices.ewm(span=200, adjust=False).mean().iloc[-1]
     current_price = close_prices.iloc[-1]
     return "BULLISH" if current_price > ema200 else "BEARISH"
@@ -81,8 +83,11 @@ def analyze_smc_setup(symbol):
     if df_15m.empty or df_1h.empty:
         return None
 
-    close_15m = df_15m['Close'].squeeze()
-    current_price = round(float(close_15m.iloc[-1]), 4 if "EURUSD" in symbol else 2)
+    close_15m = df_15m['Close'].dropna().squeeze()
+    
+    # تحسين الخانات العشرية: 5 لليورو ليتطابق مع MT5 و 2 لباقي الأصول
+    decimals = 5 if "EURUSD" in symbol else 2
+    current_price = round(float(close_15m.iloc[-1]), decimals)
     main_trend = get_main_trend_200(symbol)
 
     # تحديد سُمك المنطقة بأسلوب دقيق لكل زوج
@@ -93,14 +98,14 @@ def analyze_smc_setup(symbol):
     else:
         step = 1.5
 
-    high_1h = df_1h['High'].squeeze()
-    low_1h = df_1h['Low'].squeeze()
+    high_1h = df_1h['High'].dropna().squeeze()
+    low_1h = df_1h['Low'].dropna().squeeze()
 
-    demand_low = round(float(low_1h.iloc[-20:].min()), 4 if "EURUSD" in symbol else 2)
-    demand_high = round(demand_low + step, 4 if "EURUSD" in symbol else 2)
+    demand_low = round(float(low_1h.iloc[-20:].min()), decimals)
+    demand_high = round(demand_low + step, decimals)
 
-    supply_high = round(float(high_1h.iloc[-20:].max()), 4 if "EURUSD" in symbol else 2)
-    supply_low = round(supply_high - step, 4 if "EURUSD" in symbol else 2)
+    supply_high = round(float(high_1h.iloc[-20:].max()), decimals)
+    supply_low = round(supply_high - step, decimals)
 
     return {
         "price": current_price,
@@ -124,16 +129,16 @@ def background_monitor():
                         last_states[name] = current_state
                         price = analysis["price"]
                         users = get_alert_users()
-                        decimals = 4 if "EURUSD" in sym else 2
+                        decimals = 5 if "EURUSD" in sym else 2
 
                         if current_state == "BUY":
-                            sl = round(analysis["demand_low"] - (100.0 if "BTC" in sym else (0.0010 if "EURUSD" in sym else 2.0)), decimals)
+                            sl = round(analysis["demand_low"] - (100.0 if "BTC" in sym else (0.00100 if "EURUSD" in sym else 2.0)), decimals)
                             risk = price - sl
                             tp1 = round(price + (risk * 1.5), decimals)
                             tp2 = round(price + (risk * 3.0), decimals)
                             direction = "شراء (BUY) 📈"
                         else:
-                            sl = round(analysis["supply_high"] + (100.0 if "BTC" in sym else (0.0010 if "EURUSD" in sym else 2.0)), decimals)
+                            sl = round(analysis["supply_high"] + (100.0 if "BTC" in sym else (0.00100 if "EURUSD" in sym else 2.0)), decimals)
                             risk = sl - price
                             tp1 = round(price - (risk * 1.5), decimals)
                             tp2 = round(price - (risk * 3.0), decimals)
@@ -147,7 +152,7 @@ def background_monitor():
                             f"🧱 المنطقة: `{analysis['demand'] if current_state == 'BUY' else analysis['supply']}`\n"
                             f"⛔ وقف الخسارة (SL): `{sl}`\n"
                             f"🎯 الهدف الأول (TP1): `{tp1}`\n"
-                            f"🎯 الهدف الثاني (TP2): `{tp2}`"
+                            f"🎯 Target الثاني (TP2): `{tp2}`"
                         )
 
                         for chat_id in users:
