@@ -14,7 +14,7 @@ app = Flask(__name__)
 
 SYMBOLS = {
     "البيتكوين ₿": "BTCUSDT",
-    "الذهب 🥇": "PAXGUSDT",  # PAXG هو التوكن المباشر للذهب الحقيقي على Binance بأسعار لحظية
+    "الذهب 🥇": "PAXGUSDT",
     "اليورو/دولار 💶": "EURUSDT"
 }
 
@@ -54,11 +54,15 @@ def get_alert_users():
     except:
         return []
 
-# جلب بيانات سريع وبدون تعليق عبر Binance API المباشر
+# جلب البيانات مع إضافة Headers لمنع الحظر من Render
 def fetch_klines(symbol_ticker, interval="15m", limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={interval}&limit={limit}"
-        res = requests.get(url, timeout=3).json()
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+        }
+        res = requests.get(url, headers=headers, timeout=5).json()
+        
         if not isinstance(res, list):
             return pd.DataFrame()
         
@@ -71,15 +75,15 @@ def fetch_klines(symbol_ticker, interval="15m", limit=50):
         df['Low'] = df['Low'].astype(float)
         df['Close'] = df['Close'].astype(float)
         return df
-    except Exception:
+    except Exception as e:
         return pd.DataFrame()
 
-# تحليل كتل الأوامر والفجوات السعرية (SMC)
+# تحليل مناطق SMC
 def analyze_smc_setup(symbol_key):
     ticker = SYMBOLS[symbol_key]
     df = fetch_klines(ticker, "15m", 50)
 
-    if df.empty:
+    if df.empty or len(df) < 20:
         return None
 
     decimals = 5 if "اليورو" in symbol_key else 2
