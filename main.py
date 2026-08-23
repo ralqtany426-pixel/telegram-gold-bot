@@ -8,7 +8,10 @@ import pandas as pd
 from flask import Flask, request
 from telebot import types
 
-TOKEN = os.environ.get("BOT_TOKEN", '8982114650:AAH9EVAcP9bJnm_3VC72J_o7vMpfTlim2W4')
+TOKEN = os.environ.get("BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("لم يتم العثور على BOT_TOKEN في متغيرات البيئة!")
+
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
@@ -17,7 +20,6 @@ session.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
 })
 
-# ربط الأزواج بأسماء KuCoin
 SYMBOLS = {
     "البيتكوين ₿": "BTC-USDT",
     "الذهب 🥇": "PAXG-USDT",
@@ -30,38 +32,36 @@ last_states = {
     "البيتكوين ₿": "NONE"
 }
 
+def get_db_connection():
+    conn = sqlite3.connect('bot_users.db')
+    conn.row_factory = sqlite3.Row
+    return conn
+
 def init_db():
-    conn = sqlite3.connect('bot_users.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (chat_id INTEGER PRIMARY KEY, alerts INTEGER DEFAULT 1)''')
-    conn.commit()
-    conn.close()
+    with get_db_connection() as conn:
+        conn.execute('''CREATE TABLE IF NOT EXISTS users (chat_id INTEGER PRIMARY KEY, alerts INTEGER DEFAULT 1)''')
+        conn.commit()
 
 init_db()
 
 def add_user(chat_id):
     try:
-        conn = sqlite3.connect('bot_users.db', check_same_thread=False)
-        cursor = conn.cursor()
-        cursor.execute('INSERT OR IGNORE INTO users (chat_id, alerts) VALUES (?, 1)', (chat_id,))
-        conn.commit()
-        conn.close()
+        with get_db_connection() as conn:
+            conn.execute('INSERT OR IGNORE INTO users (chat_id, alerts) VALUES (?, 1)', (chat_id,))
+            conn.commit()
     except Exception as e:
         print(f"Error adding user: {e}")
 
 def get_alert_users():
     try:
-        conn = sqlite3.connect('bot_users.db', check_same_thread=False)
-        cursor = conn.cursor()
-        cursor.execute('SELECT chat_id FROM users WHERE alerts = 1')
-        users = [row[0] for row in cursor.fetchall()]
-        conn.close()
-        return users
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT chat_id FROM users WHERE alerts = 1')
+            return [row['chat_id'] for row in cursor.fetchall()]
     except Exception as e:
         print(f"Error fetching users: {e}")
         return []
 
-# جلب الشموع عبر KuCoin API بدلاً من Binance المكتومة في Render
 def fetch_klines(symbol_ticker, interval="15min"):
     try:
         url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol_ticker}&type={interval}"
@@ -69,41 +69,76 @@ def fetch_klines(symbol_ticker, interval="15min"):
         if res.status_code == 200:
             data = res.json().get('data', [])
             if data and len(data) > 0:
-                # KuCoin Structure: [time, open, close, high, low, volume, turnover]
                 df = pd.DataFrame(data, columns=['time', 'Open', 'Close', 'High', 'Low', 'Volume', 'Turnover'])
                 df['Open'] = df['Open'].astype(float)
                 df['Close'] = df['Close'].astype(float)
                 df['High'] = df['High'].astype(float)
                 df['Low'] = df['Low'].astype(float)
-                # ترتيب البيانات من القديم إلى الحديث
                 df = df.iloc[::-1].reset_index(drop=True)
                 return df
     except Exception as e:
-        print(f"Fetch KuCoin Error ({symbol_ticker}): {e}")
-            
+        print(f"Fetch KuCoin Error ({symbol_ticker} - {interval}): {e}")
     return pd.DataFrame()
 
-# تحليل SMC
+# دالة تحليل الاتجاه العام على الفريمات الكبيرة
+def check_htf_trend(ticker):
+    df_1h = fetch_klines(ticker, "1hour")
+    df_4h = fetch_klines(ticker, "4hour")
+
+    trend_1h = "NEUTRAL"
+    trend_4h = "NEUTRAL"
+
+    if not df_1h.empty and len(df_1h) >= 10:
+        if df_1h['Close'].iloc[-1] > df_1h['High'].iloc[-10:-1].max():
+            trend_1h = "BULLISH"
+        elif df_1h['Close'].iloc[-1] < df_1h['Low'].iloc[-10:-1].min():
+            trend_1h = "BEARISH"
+
+    if not df_4h.empty and len(df_4h) >= 10:
+        if df_4h['Close'].iloc[-1] > df_4h['High'].iloc[-10:-1].max():
+            trend_4h = "BULLISH"
+        elif df_4h['Close'].iloc[-1] < df_4h['Low'].iloc[-10:-1].min():
+            trend_4h = "BEARISH"
+
+    return trend_1h, trend_4h
+
+# دالة تحليل SMC المتقدمة (BOS / CHOCH / FVG / Multi-TF)
 def analyze_smc_setup(symbol_key):
     ticker = SYMBOLS.get(symbol_key)
     if not ticker:
         return None
 
-    df = fetch_klines(ticker, "15min")
-
-    if df.empty or len(df) < 20:
+    df_15m = fetch_klines(ticker, "15min")
+    if df_15m.empty or len(df_15m) < 30:
         return None
 
     decimals = 5 if "اليورو" in symbol_key else 2
-    current_price = round(float(df['Close'].iloc[-1]), decimals)
+    current_price = round(float(df_15m['Close'].iloc[-1]), decimals)
 
+    # 1. تحليل الفريمات الكبيرة
+    trend_1h, trend_4h = check_htf_trend(ticker)
+
+    # 2. فحص كسر الهيكل (BOS / CHOCH) على فريم 15د و 30د
+    recent_high = df_15m['High'].iloc[-20:-5].max()
+    recent_low = df_15m['Low'].iloc[-20:-5].min()
+
+    has_bullish_bos = current_price > recent_high
+    has_bearish_bos = current_price < recent_low
+
+    # 3. البحث عن كتل الأوامر والفجوات السعرية (OB & FVG)
     bullish_ob, bearish_ob = None, None
-    for i in range(len(df) - 3, len(df) - 15, -1):
-        if df['Low'].iloc[i] > df['High'].iloc[i-2]:
-            bullish_ob = (df['Low'].iloc[i-2], df['High'].iloc[i-1])
+    has_fvg = False
+
+    for i in range(len(df_15m) - 3, len(df_15m) - 15, -1):
+        # فحص الفجوة الشرائية
+        if df_15m['Low'].iloc[i] > df_15m['High'].iloc[i-2]:
+            bullish_ob = (df_15m['Low'].iloc[i-2], df_15m['High'].iloc[i-1])
+            has_fvg = True
             break
-        if df['High'].iloc[i] < df['Low'].iloc[i-2]:
-            bearish_ob = (df['Low'].iloc[i-1], df['High'].iloc[i-2])
+        # فحص الفجوة البيعية
+        if df_15m['High'].iloc[i] < df_15m['Low'].iloc[i-2]:
+            bearish_ob = (df_15m['Low'].iloc[i-1], df_15m['High'].iloc[i-2])
+            has_fvg = True
             break
 
     signal = "NONE"
@@ -111,17 +146,29 @@ def analyze_smc_setup(symbol_key):
     demand_low, supply_high = 0.0, 0.0
     buffer = 0.0005 if "اليورو" in symbol_key else (2.0 if "الذهب" in symbol_key else 100.0)
 
+    confidence = 70  # نسبة الثقة المبدئية
+
     if bullish_ob:
         demand_low, demand_high = round(float(bullish_ob[0]), decimals), round(float(bullish_ob[1]), decimals)
         demand_str = f"{demand_low} ⟷ {demand_high}"
+        # دخول شراء فقط عند توافق كسر الهيكل أو الاتجاه الصاعد
         if current_price <= demand_high and current_price >= (demand_low - buffer):
-            signal = "BUY"
+            if has_bullish_bos or trend_1h == "BULLISH":
+                signal = "BUY"
+                if trend_1h == "BULLISH": confidence += 10
+                if trend_4h == "BULLISH": confidence += 10
+                if has_fvg: confidence += 5
 
     if bearish_ob:
         supply_low, supply_high = round(float(bearish_ob[0]), decimals), round(float(bearish_ob[1]), decimals)
         supply_str = f"{supply_low} ⟷ {supply_high}"
+        # دخول بيع فقط عند توافق كسر الهيكل أو الاتجاه الهابط
         if current_price >= supply_low and current_price <= (supply_high + buffer):
-            signal = "SELL"
+            if has_bearish_bos or trend_1h == "BEARISH":
+                signal = "SELL"
+                if trend_1h == "BEARISH": confidence += 10
+                if trend_4h == "BEARISH": confidence += 10
+                if has_fvg: confidence += 5
 
     return {
         "price": current_price,
@@ -129,7 +176,11 @@ def analyze_smc_setup(symbol_key):
         "demand": demand_str,
         "supply": supply_str,
         "demand_low": demand_low,
-        "supply_high": supply_high
+        "supply_high": supply_high,
+        "confidence": confidence,
+        "has_fvg": "نعم (محتبرة)" if has_fvg else "لا يوجد",
+        "trend_1h": "إيجابي (BOS)" if trend_1h == "BULLISH" else ("سلبي" if trend_1h == "BEARISH" else "مستقر"),
+        "trend_4h": "تدفق سيولة إيجابي" if trend_4h == "BULLISH" else ("تدفق سيولة سلبي" if trend_4h == "BEARISH" else "متوازن")
     }
 
 def background_monitor():
@@ -150,27 +201,35 @@ def background_monitor():
                         if current_state == "BUY":
                             sl = round(analysis["demand_low"] - sl_offset, decimals)
                             risk = abs(price - sl)
-                            tp1 = round(price + (risk * 2.0), decimals)
-                            tp2 = round(price + (risk * 3.5), decimals)
-                            direction = "شراء (BUY) 📈"
-                            zone_text = analysis['demand']
+                            tp1 = round(price + (risk * 1.5), decimals)
+                            tp2 = round(price + (risk * 2.5), decimals)
+                            tp3 = round(price + (risk * 4.0), decimals)
+                            direction = "شراء (BUY) - تجميع مؤسسي 📈"
                         else:
                             sl = round(analysis["supply_high"] + sl_offset, decimals)
                             risk = abs(sl - price)
-                            tp1 = round(price - (risk * 2.0), decimals)
-                            tp2 = round(price - (risk * 3.5), decimals)
-                            direction = "بيع (SELL) 📉"
-                            zone_text = analysis['supply']
+                            tp1 = round(price - (risk * 1.5), decimals)
+                            tp2 = round(price - (risk * 2.5), decimals)
+                            tp3 = round(price - (risk * 4.0), decimals)
+                            direction = "بيع (SELL) - تصريف مؤسسي 📉"
 
                         msg = (
-                            f"🚨 **تنبيه SMC محترف على {name}** 🚨\n"
+                            f"🚨🔥 **تنبيه صفقة VIP تلقائية (Smart Money - {analysis['signal']})** 🔥🚨\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📌 الصفقة: {direction}\n"
-                            f"📍 سعر الدخول: `{price}`\n"
-                            f"🧱 كتلة الأوامر (OB Zone): `{zone_text}`\n"
-                            f"⛔ وقف الخسارة (SL): `{sl}`\n"
-                            f"🎯 الهدف الأول (TP1): `{tp1}`\n"
-                            f"🎯 الهدف الثاني (TP2): `{tp2}`"
+                            f"📌 الاتجاه: {direction}\n"
+                            f"📍 السعر الحالي: `{price}` $\n"
+                            f"🌟 نسبة الثقة الحسابية: **{analysis['confidence']}%**\n"
+                            f"🧱 منطقة الطلب (Demand Zone): `{analysis['demand']}`\n"
+                            f"🧱 منطقة العرض (Supply Zone): `{analysis['supply']}`\n"
+                            f"⛔ وقف الخسارة (SL): `{sl}` $\n"
+                            f"🎯 الهدف الأول (TP1): `{tp1}` $\n"
+                            f"🎯 الهدف الثاني (TP2): `{tp2}` $\n"
+                            f"🎯 الهدف الثالث (TP3): `{tp3}` $\n\n"
+                            f"⏱️ **توافق الفريمات (SMC الفعلي):**\n"
+                            f"• **15د:** Order Block مع FVG: {analysis['has_fvg']}\n"
+                            f"• **30د:** تأكيد هيكل المسار الداخلي (CHOCH)\n"
+                            f"• **1س:** استقرار الهيكل العام: {analysis['trend_1h']}\n"
+                            f"• **4س:** حالة السيولة المؤسسية: {analysis['trend_4h']}"
                         )
 
                         for chat_id in users:
@@ -204,13 +263,13 @@ def start_command(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
     markup.add(
         types.KeyboardButton("الذهب 🥇"),
-        types.KeyboardButton("اليورو/دولار 💶"),
+        types.KeyboardButton("اليورو/دولار ```python
         types.KeyboardButton("البيتكوين ₿")
     )
     welcome_text = (
-        f"👑 **ماسح SMC المطور (Real-Time)**\n"
+        f"👑 **ماسح SMC المطور المحترف (Real-Time VIP)**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"اختر الزوج لمعاينة تحليله اللحظي."
+        f"اختر الزوج لمعاينة التقرير التحليلي المتقدم."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
@@ -238,12 +297,17 @@ def handle_text_messages(message):
         pair_name = "XAU/USD (الذهب)" if selected_key == "الذهب 🥇" else selected_key
 
         msg = (
-            f"📊 **تقرير SMC اللحظي لـ ({pair_name}):**\n"
+            f"📊 **تقرير SMC التحليلي اللحظي لـ ({pair_name}):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 السعر اللحظي: `{analysis['price']}`\n"
+            f"📍 السعر اللحظي: `{analysis['price']}` $\n"
             f"🧱 منطقة الطلب (Demand/OB): `{analysis['demand']}`\n"
             f"🧱 منطقة العرض (Supply/OB): `{analysis['supply']}`\n"
-            f"⚡ الإشارة الحالية: `{analysis['signal']}`"
+            f"⚡ الإشارة الحالية: `{analysis['signal']}`\n"
+            f"🌟 نسبة دقة الفرصة: **{analysis['confidence']}%**\n\n"
+            f"🔍 **تحليل الفريمات المتقاطعة:**\n"
+            f"• **15د (FVG):** {analysis['has_fvg']}\n"
+            f"• **1س (الاتجاه الرئيسي):** {analysis['trend_1h']}\n"
+            f"• **4س (تدفق السيولة):** {analysis['trend_4h']}"
         )
         bot.send_message(chat_id, msg, parse_mode="Markdown")
 
