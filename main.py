@@ -21,15 +21,15 @@ session.headers.update({
 })
 
 SYMBOLS = {
-    "البيتكوين ₿": "BTC-USDT",
-    "الذهب 🥇": "PAXG-USDT",
-    "اليورو/دولار 💶": "EUR-USDT"
+    "البيتكوين": "BTC-USDT",
+    "الذهب": "PAXG-USDT",
+    "اليورو": "EUR-USDT"
 }
 
 last_states = {
-    "الذهب 🥇": "NONE",
-    "اليورو/دولار 💶": "NONE",
-    "البيتكوين ₿": "NONE"
+    "الذهب": "NONE",
+    "اليورو": "NONE",
+    "البيتكوين": "NONE"
 }
 
 def get_db_connection():
@@ -64,7 +64,7 @@ def get_alert_users():
 
 def fetch_klines(symbol_ticker, interval="15min"):
     try:
-        url = f"[https://api.kucoin.com/api/v1/market/candles?symbol=](https://api.kucoin.com/api/v1/market/candles?symbol=){symbol_ticker}&type={interval}"
+        url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol_ticker}&type={interval}"
         res = session.get(url, timeout=5)
         if res.status_code == 200:
             data = res.json().get('data', [])
@@ -107,10 +107,10 @@ def analyze_smc_setup(symbol_key):
         return None
 
     df_15m = fetch_klines(ticker, "15min")
-    if df_15m.empty or len(df_15m) < 30:
+    if df_15m.empty or len(df_15m) < 20:
         return None
 
-    decimals = 5 if "اليورو" in symbol_key else 2
+    decimals = 5 if symbol_key == "اليورو" else 2
     current_price = round(float(df_15m['Close'].iloc[-1]), decimals)
 
     trend_1h, trend_4h = check_htf_trend(ticker)
@@ -137,7 +137,7 @@ def analyze_smc_setup(symbol_key):
     signal = "NONE"
     demand_str, supply_str = "غير محددة", "غير محددة"
     demand_low, supply_high = 0.0, 0.0
-    buffer = 0.0005 if "اليورو" in symbol_key else (2.0 if "الذهب" in symbol_key else 100.0)
+    buffer = 0.0005 if symbol_key == "اليورو" else (2.0 if symbol_key == "الذهب" else 100.0)
 
     confidence = 70
 
@@ -186,8 +186,8 @@ def background_monitor():
                         last_states[name] = current_state
                         price = analysis["price"]
                         users = get_alert_users()
-                        decimals = 5 if "اليورو" in name else 2
-                        sl_offset = 0.0008 if "اليورو" in name else (3.0 if "الذهب" in name else 250.0)
+                        decimals = 5 if name == "اليورو" else 2
+                        sl_offset = 0.0008 if name == "اليورو" else (3.0 if name == "الذهب" else 250.0)
 
                         if current_state == "BUY":
                             sl = round(analysis["demand_low"] - sl_offset, decimals)
@@ -205,7 +205,7 @@ def background_monitor():
                             direction = "بيع (SELL) - تصريف مؤسسي 📉"
 
                         msg = (
-                            f"🚨🔥 **تنبيه صفقة VIP تلقائية (Smart Money - {analysis['signal']})** 🔥🚨\n"
+                            f"🚨🔥 **تنبيه صفقة VIP تلقائية (Smart Money - {analysis['signal']}) على {name}** 🔥🚨\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n"
                             f"📌 الاتجاه: {direction}\n"
                             f"📍 السعر الحالي: `{price}` $\n"
@@ -271,12 +271,12 @@ def handle_text_messages(message):
     add_user(chat_id)
 
     selected_key = None
-    if "البيتكوين" in text:
-        selected_key = "البيتكوين ₿"
+    if "البيتكوين" in text or "BTC" in text.upper():
+        selected_key = "البيتكوين"
     elif "الذهب" in text or "XAU" in text.upper():
-        selected_key = "الذهب 🥇"
+        selected_key = "الذهب"
     elif "اليورو" in text or "EUR" in text.upper():
-        selected_key = "اليورو/دولار 💶"
+        selected_key = "اليورو"
 
     if selected_key:
         analysis = analyze_smc_setup(selected_key)
@@ -285,7 +285,7 @@ def handle_text_messages(message):
             bot.send_message(chat_id, f"⚠️ تعذر جلب البيانات لـ {text} حالياً. حاول مرة أخرى بعد لحظات.")
             return
 
-        pair_name = "XAU/USD (الذهب)" if selected_key == "الذهب 🥇" else selected_key
+        pair_name = "XAU/USD (الذهب)" if selected_key == "الذهب" else ("EUR/USD (اليورو)" if selected_key == "اليورو" else "BTC/USDT (البيتكوين)")
 
         msg = (
             f"📊 **تقرير SMC التحليلي اللحظي لـ ({pair_name}):**\n"
