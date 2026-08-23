@@ -16,10 +16,9 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-# استخدام رموز أساسية
 SYMBOLS = {
     "البيتكوين": "BTC-USD",
-    "الذهب": "GC=F",
+    "الذهب": "XAUUSD=X",
     "اليورو": "EURUSD=X"
 }
 
@@ -69,47 +68,40 @@ def fetch_klines(symbol_ticker, interval="15min"):
     }
     tf, period = tf_map.get(interval, ("15m", "1d"))
 
-    # رموز بديلة للذهب لضمان السحب المباشر دون انقطاع
-    tickers_to_try = [symbol_ticker]
-    if symbol_ticker in ["XAUUSD=X", "GC=F"]:
-        tickers_to_try = ["GC=F", "XAUUSD=X", "XAU-USD"]
+    # استهداف الذهب الفوري المباشر XAUUSD=X أولاً
+    tickers = [symbol_ticker]
+    if "XAU" in symbol_ticker or "GC" in symbol_ticker:
+        tickers = ["XAUUSD=X", "GC=F"]
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0'}
 
-    for current_symbol in tickers_to_try:
-        # المحاولة الأولى: API المباشر عبر HTTP لتفادي حظر المكتبة
+    for sym in tickers:
         try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{current_symbol}?range={period}&interval={tf}"
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range={period}&interval={tf}"
             res = requests.get(url, headers=headers, timeout=5)
             if res.status_code == 200:
                 data = res.json()
                 if data.get('chart', {}).get('result'):
                     result = data['chart']['result'][0]
                     quote = result['indicators']['quote'][0]
-                    
                     df = pd.DataFrame({
                         'Open': quote['open'],
                         'High': quote['high'],
                         'Low': quote['low'],
                         'Close': quote['close']
                     }).dropna()
-
-                    if not df.empty and len(df) >= 3:
+                    if not df.empty and len(df) >= 5:
                         return df
-        except Exception as e:
-            print(f"Direct API Error ({current_symbol}): {e}")
+        except Exception:
+            pass
 
-        # المحاولة الثانية: استخدام yfinance كخيار احتياطي
         try:
-            ticker = yf.Ticker(current_symbol)
-            df = ticker.history(period=period, interval=tf)
-            if not df.empty and len(df) >= 3:
+            df = yf.Ticker(sym).history(period=period, interval=tf)
+            if not df.empty and len(df) >= 5:
                 df = df.reset_index()
                 return df[['Open', 'High', 'Low', 'Close']]
-        except Exception as e:
-            print(f"yfinance Error ({current_symbol}): {e}")
+        except Exception:
+            pass
 
     return pd.DataFrame()
 
@@ -144,16 +136,14 @@ def scan_high_winrate_signals(symbol_key):
         return None
 
     df = fetch_klines(ticker, "15min")
-    if df.empty or len(df) < 3:
+    if df.empty or len(df) < 5:
         return None
 
     decimals = 5 if symbol_key == "اليورو" else 2
     current_price = round(float(df['Close'].iloc[-1]), decimals)
     trend = get_market_trend(ticker)
 
-    bullish_ob, bearish_ob = None, None
     fvg_status = "غير متوفر"
-
     for i in range(len(df) - 1, 2, -1):
         if df['Low'].iloc[i] > df['High'].iloc[i-2]:
             fvg_status = f"Bullish FVG 🟢 ({round(df['High'].iloc[i-2], decimals)} - {round(df['Low'].iloc[i], decimals)})"
@@ -162,22 +152,22 @@ def scan_high_winrate_signals(symbol_key):
             fvg_status = f"Bearish FVG 🔴 ({round(df['High'].iloc[i], decimals)} - {round(df['Low'].iloc[i-2], decimals)})"
             break
 
-    valid_lows = [df['Low'].iloc[i] for i in range(max(0, len(df)-15), len(df)) if df['Low'].iloc[i] < current_price]
-    if valid_lows:
-        demand_low = min(valid_lows)
-        demand_high = demand_low + (0.0008 if symbol_key == "اليورو" else (2.5 if symbol_key == "الذهب" else 150.0))
-        bullish_ob = (round(demand_low, decimals), round(demand_high, decimals))
+    # حساب الأوردر بلوك النواة SMC (آخر شمعة هابطة قبل الصعود أو عكسها)
+    bullish_ob, bearish_ob = None, None
+    for i in range(len(df)-2, 1, -1):
+        if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
+            bullish_ob = (round(df['Low'].iloc[i], decimals), round(df['High'].iloc[i], decimals))
+            break
 
-    valid_highs = [df['High'].iloc[i] for i in range(max(0, len(df)-15), len(df)) if df['High'].iloc[i] > current_price]
-    if valid_highs:
-        supply_high = max(valid_highs)
-        supply_low = supply_high - (0.0008 if symbol_key == "اليورو" else (2.5 if symbol_key == "الذهب" else 150.0))
-        bearish_ob = (round(supply_low, decimals), round(supply_high, decimals))
+    for i in range(len(df)-2, 1, -1):
+        if df['Close'].iloc[i] > df['Open'].iloc[i] and df['Close'].iloc[i+1] < df['Low'].iloc[i]:
+            bearish_ob = (round(df['Low'].iloc[i], decimals), round(df['High'].iloc[i], decimals))
+            break
 
     if not bullish_ob:
-        bullish_ob = (round(current_price - (0.0020 if symbol_key == "اليورو" else 4.0), decimals), round(current_price - (0.0008 if symbol_key == "اليورو" else 1.5), decimals))
+        bullish_ob = (round(current_price * 0.997, decimals), round(current_price * 0.999, decimals))
     if not bearish_ob:
-        bearish_ob = (round(current_price + (0.0008 if symbol_key == "اليورو" else 1.5), decimals), round(current_price + (0.0020 if symbol_key == "اليورو" else 4.0), decimals))
+        bearish_ob = (round(current_price * 1.001, decimals), round(current_price * 1.003, decimals))
 
     signal = "NONE"
     setup_type = ""
@@ -265,7 +255,7 @@ threading.Thread(target=background_monitor, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "Bot 1-30 Min High Precision SMC Engine Active!", 200
+    return "Bot Engine Active!", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
