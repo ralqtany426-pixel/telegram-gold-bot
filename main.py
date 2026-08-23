@@ -5,6 +5,7 @@ import telebot
 import threading
 import time
 import pandas as pd
+import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
@@ -22,7 +23,7 @@ session.headers.update({
 
 SYMBOLS = {
     "البيتكوين": "BTC-USDT",
-    "الذهب": "PAXG-USDT",
+    "الذهب": "XAUUSD",
     "اليورو": "EUR-USDT"
 }
 
@@ -63,6 +64,20 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_ticker, interval="15min"):
+    # جلب أسعار الذهب الحقيقية (XAUUSD Spot / Futures) بشكل مباشر
+    if symbol_ticker == "XAUUSD":
+        try:
+            tf_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "1h"}
+            ticker_data = yf.Ticker("GC=F")
+            data = ticker_data.history(period="5d", interval=tf_map.get(interval, "15m"))
+            if not data.empty:
+                df = data.reset_index()
+                df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+                return df
+        except Exception as e:
+            print(f"Fetch XAUUSD Error: {e}")
+
+    # للبيتكوين واليورو عبر منصة KuCoin
     try:
         url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol_ticker}&type={interval}"
         res = session.get(url, timeout=5)
@@ -145,14 +160,16 @@ def analyze_smc_setup(symbol_key):
     signal = "NONE"
     demand_str, supply_str = "غير محددة", "غير محددة"
     demand_low, supply_high = 0.0, 0.0
-    buffer = 0.0005 if symbol_key == "اليورو" else (2.0 if symbol_key == "الذهب" else 100.0)
+    
+    # تحسين نطاق السماحية (Buffer) لضمان تفعيل التنبيه عند اقتراب السعر من المنطقة
+    buffer = 0.0008 if symbol_key == "اليورو" else (5.0 if symbol_key == "الذهب" else 200.0)
 
     confidence = 65
 
     if bullish_ob:
         demand_low, demand_high = round(float(bullish_ob[0]), decimals), round(float(bullish_ob[1]), decimals)
         demand_str = f"{demand_low} ⟷ {demand_high}"
-        if current_price <= demand_high and current_price >= (demand_low - buffer):
+        if current_price <= (demand_high + buffer) and current_price >= (demand_low - buffer):
             if has_bullish_bos or trend_1h == "BULLISH":
                 signal = "BUY"
                 if "صاعد" in trend_30m: confidence += 10
@@ -163,7 +180,7 @@ def analyze_smc_setup(symbol_key):
     if bearish_ob:
         supply_low, supply_high = round(float(bearish_ob[0]), decimals), round(float(bearish_ob[1]), decimals)
         supply_str = f"{supply_low} ⟷ {supply_high}"
-        if current_price >= supply_low and current_price <= (supply_high + buffer):
+        if current_price >= (supply_low - buffer) and current_price <= (supply_high + buffer):
             if has_bearish_bos or trend_1h == "BEARISH":
                 signal = "SELL"
                 if "هابط" in trend_30m: confidence += 10
