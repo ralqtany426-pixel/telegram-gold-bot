@@ -58,7 +58,6 @@ def get_alert_users():
 
 def fetch_data(symbol, tf, period="30d"):
     try:
-        # تعديل لضمان استدعاء البيانات وتحديث الشموع الأخيرة
         df = yf.download(symbol, period=period, interval=tf, progress=False, auto_adjust=True)
         if df.empty and symbol == "XAUUSD=X":
             df = yf.download("GC=F", period=period, interval=tf, progress=False, auto_adjust=True)
@@ -70,7 +69,7 @@ def get_main_trend_200(symbol):
     df_4h = fetch_data(symbol, "1h", "30d")
     if df_4h.empty or len(df_4h) < 100:
         return "NEUTRAL"
-    
+
     close_prices = df_4h['Close'].dropna().squeeze()
     ema200 = close_prices.ewm(span=200, adjust=False).mean().iloc[-1]
     current_price = close_prices.iloc[-1]
@@ -84,19 +83,17 @@ def analyze_smc_setup(symbol):
         return None
 
     close_15m = df_15m['Close'].dropna().squeeze()
-    
-    # تحسين الخانات العشرية: 5 لليورو ليتطابق مع MT5 و 2 لباقي الأصول
+
     decimals = 5 if "EURUSD" in symbol else 2
     current_price = round(float(close_15m.iloc[-1]), decimals)
     main_trend = get_main_trend_200(symbol)
 
-    # تحديد سُمك المنطقة بأسلوب دقيق لكل زوج
     if "EURUSD" in symbol:
         step = 0.0005
     elif "BTC" in symbol:
-        step = 20.0
+        step = 150.0
     else:
-        step = 1.5
+        step = 2.0
 
     high_1h = df_1h['High'].dropna().squeeze()
     low_1h = df_1h['Low'].dropna().squeeze()
@@ -107,9 +104,16 @@ def analyze_smc_setup(symbol):
     supply_high = round(float(high_1h.iloc[-20:].max()), decimals)
     supply_low = round(supply_high - step, decimals)
 
+    # توليد الإشارة تلقائياً بناءً على موقع السعر من المناطق والاتجاه العام
+    signal = "NONE"
+    if current_price <= demand_high and current_price >= demand_low and main_trend == "BULLISH":
+        signal = "BUY"
+    elif current_price >= supply_low and current_price <= supply_high and main_trend == "BEARISH":
+        signal = "SELL"
+
     return {
         "price": current_price,
-        "signal": "NONE",
+        "signal": signal,
         "trend": main_trend,
         "demand": f"{demand_low} ⟷ {demand_high}",
         "supply": f"{supply_low} ⟷ {supply_high}",
@@ -132,14 +136,14 @@ def background_monitor():
                         decimals = 5 if "EURUSD" in sym else 2
 
                         if current_state == "BUY":
-                            sl = round(analysis["demand_low"] - (100.0 if "BTC" in sym else (0.00100 if "EURUSD" in sym else 2.0)), decimals)
-                            risk = price - sl
+                            sl = round(analysis["demand_low"] - (100.0 if "BTC" in sym else (0.00050 if "EURUSD" in sym else 1.5)), decimals)
+                            risk = abs(price - sl)
                             tp1 = round(price + (risk * 1.5), decimals)
                             tp2 = round(price + (risk * 3.0), decimals)
                             direction = "شراء (BUY) 📈"
                         else:
-                            sl = round(analysis["supply_high"] + (100.0 if "BTC" in sym else (0.00100 if "EURUSD" in sym else 2.0)), decimals)
-                            risk = sl - price
+                            sl = round(analysis["supply_high"] + (100.0 if "BTC" in sym else (0.00050 if "EURUSD" in sym else 1.5)), decimals)
+                            risk = abs(sl - price)
                             tp1 = round(price - (risk * 1.5), decimals)
                             tp2 = round(price - (risk * 3.0), decimals)
                             direction = "بيع (SELL) 📉"
@@ -152,7 +156,7 @@ def background_monitor():
                             f"🧱 المنطقة: `{analysis['demand'] if current_state == 'BUY' else analysis['supply']}`\n"
                             f"⛔ وقف الخسارة (SL): `{sl}`\n"
                             f"🎯 الهدف الأول (TP1): `{tp1}`\n"
-                            f"🎯 Target الثاني (TP2): `{tp2}`"
+                            f"🎯 الهدف الثاني (TP2): `{tp2}`"
                         )
 
                         for chat_id in users:
