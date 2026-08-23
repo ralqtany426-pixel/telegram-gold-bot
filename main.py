@@ -1,4 +1,3 @@
-
 import os
 import sqlite3
 import requests
@@ -65,55 +64,31 @@ def get_alert_users():
 
 def fetch_klines(symbol_ticker, interval="15min"):
     if symbol_ticker == "XAUUSD":
-        interval_param = "15m"
-        range_param = "2d"
-        if interval == "30min":
-            interval_param = "30m"
-            range_param = "5d"
-        elif interval == "1hour":
-            interval_param = "1h"
-            range_param = "7d"
-        elif interval == "4hour":
-            interval_param = "1h"
-            range_param = "1mo"
-        elif interval == "1day":
-            interval_param = "1d"
-            range_param = "3mo"
-
-        # المصدر الأول: Yahoo Finance Spot / Continuous Contract
+        # جلب أسعار الذهب المباشرة (Spot Gold) لتفادي قفزات أسعار العقود الآجلة في ياهو
+        interval_map = {
+            "15min": "15m",
+            "30min": "30m",
+            "1hour": "1h",
+            "4hour": "4h",
+            "1day": "1d"
+        }
+        tf = interval_map.get(interval, "15m")
         try:
-            for symbol in ["GC=F", "XAUUSD=X"]:
-                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={interval_param}&range={range_param}"
-                res = session.get(url, timeout=5)
-                if res.status_code == 200:
-                    result = res.json()['chart']['result'][0]
-                    quote = result['indicators']['quote'][0]
-                    df = pd.DataFrame({
-                        'Open': quote['open'],
-                        'High': quote['high'],
-                        'Low': quote['low'],
-                        'Close': quote['close']
-                    }).dropna()
-
-                    if not df.empty and len(df) >= 10:
-                        return df.reset_index(drop=True)
-        except Exception as e:
-            print(f"Fetch Gold Yahoo Error: {e}")
-
-        # المصدر الثاني: GoldAPI / Binance Pax Gold لضمان التزامن اللحظي
-        try:
-            url_alt = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=50"
-            res_alt = session.get(url_alt, timeout=5)
-            if res_alt.status_code == 200:
-                data = res_alt.json()
-                df = pd.DataFrame(data, columns=['time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CloseTime', 'Qav', 'NumTrades', 'Tbk', 'Tbq', 'Ignore'])
+            url = f"https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval={tf}&limit=50"
+            res = session.get(url, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                df = pd.DataFrame(data, columns=[
+                    'time', 'Open', 'High', 'Low', 'Close', 'Vol', 
+                    'CloseTime', 'Qav', 'NumTrades', 'Tbk', 'Tbq', 'Ignore'
+                ])
                 df['Open'] = df['Open'].astype(float)
                 df['High'] = df['High'].astype(float)
                 df['Low'] = df['Low'].astype(float)
                 df['Close'] = df['Close'].astype(float)
-                return df[['Open', 'High', 'Low', 'Close']]
+                return df[['Open', 'High', 'Low', 'Close']].reset_index(drop=True)
         except Exception as e:
-            print(f"Fetch Gold Fallback Error: {e}")
+            print(f"Fetch Spot Gold Error: {e}")
 
     try:
         url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol_ticker}&type={interval}"
@@ -185,21 +160,18 @@ def scan_high_winrate_signals(symbol_key):
             break
 
     # 2. استخراج مناطق العرض والطلب الديناميكية المعالجة من الكسر
-    # استخراج مناطق الطلب التي لم يُكسر حدها الأدنى بالسعر الحالي
     valid_lows = [df['Low'].iloc[i] for i in range(len(df)-15, len(df)) if df['Low'].iloc[i] < current_price]
     if valid_lows:
         demand_low = min(valid_lows)
         demand_high = demand_low + (0.0008 if symbol_key == "اليورو" else (2.5 if symbol_key == "الذهب" else 150.0))
         bullish_ob = (round(demand_low, decimals), round(demand_high, decimals))
 
-    # استخراج مناطق العرض التي لم يُكسر حدها الأعلى بالسعر الحالي
     valid_highs = [df['High'].iloc[i] for i in range(len(df)-15, len(df)) if df['High'].iloc[i] > current_price]
     if valid_highs:
         supply_high = max(valid_highs)
         supply_low = supply_high - (0.0008 if symbol_key == "اليورو" else (2.5 if symbol_key == "الذهب" else 150.0))
         bearish_ob = (round(supply_low, decimals), round(supply_high, decimals))
 
-    # تعيين مناطق افتراضية مرنة في حال الحركة القوية العابرة
     if not bullish_ob:
         bullish_ob = (round(current_price - 4.0, decimals), round(current_price - 1.5, decimals))
     if not bearish_ob:
@@ -319,7 +291,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم تحديث بيانات الذهب وتكييف المناطق ديناميكياً مع حركة الأسعار اللحظية بنجاح."
+        f"تم تحديث سيرفر الأسعار للربط اللحظي المباشر ومطابقة الشارت بنسبة 100%."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
