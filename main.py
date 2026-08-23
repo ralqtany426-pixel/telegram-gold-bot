@@ -64,7 +64,7 @@ def get_alert_users():
 
 def fetch_klines(symbol_ticker, interval="15min"):
     try:
-        url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol_ticker}&type={interval}"
+        url = f"[https://api.kucoin.com/api/v1/market/candles?symbol=](https://api.kucoin.com/api/v1/market/candles?symbol=){symbol_ticker}&type={interval}"
         res = session.get(url, timeout=5)
         if res.status_code == 200:
             data = res.json().get('data', [])
@@ -80,7 +80,6 @@ def fetch_klines(symbol_ticker, interval="15min"):
         print(f"Fetch KuCoin Error ({symbol_ticker} - {interval}): {e}")
     return pd.DataFrame()
 
-# دالة تحليل الاتجاه العام على الفريمات الكبيرة
 def check_htf_trend(ticker):
     df_1h = fetch_klines(ticker, "1hour")
     df_4h = fetch_klines(ticker, "4hour")
@@ -102,7 +101,6 @@ def check_htf_trend(ticker):
 
     return trend_1h, trend_4h
 
-# دالة تحليل SMC المتقدمة (BOS / CHOCH / FVG / Multi-TF)
 def analyze_smc_setup(symbol_key):
     ticker = SYMBOLS.get(symbol_key)
     if not ticker:
@@ -115,27 +113,22 @@ def analyze_smc_setup(symbol_key):
     decimals = 5 if "اليورو" in symbol_key else 2
     current_price = round(float(df_15m['Close'].iloc[-1]), decimals)
 
-    # 1. تحليل الفريمات الكبيرة
     trend_1h, trend_4h = check_htf_trend(ticker)
 
-    # 2. فحص كسر الهيكل (BOS / CHOCH) على فريم 15د و 30د
     recent_high = df_15m['High'].iloc[-20:-5].max()
     recent_low = df_15m['Low'].iloc[-20:-5].min()
 
     has_bullish_bos = current_price > recent_high
     has_bearish_bos = current_price < recent_low
 
-    # 3. البحث عن كتل الأوامر والفجوات السعرية (OB & FVG)
     bullish_ob, bearish_ob = None, None
     has_fvg = False
 
     for i in range(len(df_15m) - 3, len(df_15m) - 15, -1):
-        # فحص الفجوة الشرائية
         if df_15m['Low'].iloc[i] > df_15m['High'].iloc[i-2]:
             bullish_ob = (df_15m['Low'].iloc[i-2], df_15m['High'].iloc[i-1])
             has_fvg = True
             break
-        # فحص الفجوة البيعية
         if df_15m['High'].iloc[i] < df_15m['Low'].iloc[i-2]:
             bearish_ob = (df_15m['Low'].iloc[i-1], df_15m['High'].iloc[i-2])
             has_fvg = True
@@ -146,12 +139,11 @@ def analyze_smc_setup(symbol_key):
     demand_low, supply_high = 0.0, 0.0
     buffer = 0.0005 if "اليورو" in symbol_key else (2.0 if "الذهب" in symbol_key else 100.0)
 
-    confidence = 70  # نسبة الثقة المبدئية
+    confidence = 70
 
     if bullish_ob:
         demand_low, demand_high = round(float(bullish_ob[0]), decimals), round(float(bullish_ob[1]), decimals)
         demand_str = f"{demand_low} ⟷ {demand_high}"
-        # دخول شراء فقط عند توافق كسر الهيكل أو الاتجاه الصاعد
         if current_price <= demand_high and current_price >= (demand_low - buffer):
             if has_bullish_bos or trend_1h == "BULLISH":
                 signal = "BUY"
@@ -162,7 +154,6 @@ def analyze_smc_setup(symbol_key):
     if bearish_ob:
         supply_low, supply_high = round(float(bearish_ob[0]), decimals), round(float(bearish_ob[1]), decimals)
         supply_str = f"{supply_low} ⟷ {supply_high}"
-        # دخول بيع فقط عند توافق كسر الهيكل أو الاتجاه الهابط
         if current_price >= supply_low and current_price <= (supply_high + buffer):
             if has_bearish_bos or trend_1h == "BEARISH":
                 signal = "SELL"
@@ -178,7 +169,7 @@ def analyze_smc_setup(symbol_key):
         "demand_low": demand_low,
         "supply_high": supply_high,
         "confidence": confidence,
-        "has_fvg": "نعم (محتبرة)" if has_fvg else "لا يوجد",
+        "has_fvg": "نعم (اختبار الفجوة)" if has_fvg else "لا يوجد",
         "trend_1h": "إيجابي (BOS)" if trend_1h == "BULLISH" else ("سلبي" if trend_1h == "BEARISH" else "مستقر"),
         "trend_4h": "تدفق سيولة إيجابي" if trend_4h == "BULLISH" else ("تدفق سيولة سلبي" if trend_4h == "BEARISH" else "متوازن")
     }
@@ -263,7 +254,7 @@ def start_command(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
     markup.add(
         types.KeyboardButton("الذهب 🥇"),
-        types.KeyboardButton("اليورو/دولار ```python
+        types.KeyboardButton("اليورو/دولار 💶"),
         types.KeyboardButton("البيتكوين ₿")
     )
     welcome_text = (
