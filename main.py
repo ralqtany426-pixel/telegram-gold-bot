@@ -81,11 +81,19 @@ def fetch_klines(symbol_ticker, interval="15min"):
     return pd.DataFrame()
 
 def check_htf_trend(ticker):
+    df_30m = fetch_klines(ticker, "30min")
     df_1h = fetch_klines(ticker, "1hour")
     df_4h = fetch_klines(ticker, "4hour")
 
+    trend_30m = "مستقر (لا يوجد CHOCH)"
     trend_1h = "NEUTRAL"
     trend_4h = "NEUTRAL"
+
+    if not df_30m.empty and len(df_30m) >= 10:
+        if df_30m['Close'].iloc[-1] > df_30m['High'].iloc[-10:-1].max():
+            trend_30m = "تأكيد CHOCH صاعد 📈"
+        elif df_30m['Close'].iloc[-1] < df_30m['Low'].iloc[-10:-1].min():
+            trend_30m = "تأكيد CHOCH هابط 📉"
 
     if not df_1h.empty and len(df_1h) >= 10:
         if df_1h['Close'].iloc[-1] > df_1h['High'].iloc[-10:-1].max():
@@ -99,7 +107,7 @@ def check_htf_trend(ticker):
         elif df_4h['Close'].iloc[-1] < df_4h['Low'].iloc[-10:-1].min():
             trend_4h = "BEARISH"
 
-    return trend_1h, trend_4h
+    return trend_30m, trend_1h, trend_4h
 
 def analyze_smc_setup(symbol_key):
     ticker = SYMBOLS.get(symbol_key)
@@ -113,7 +121,7 @@ def analyze_smc_setup(symbol_key):
     decimals = 5 if symbol_key == "اليورو" else 2
     current_price = round(float(df_15m['Close'].iloc[-1]), decimals)
 
-    trend_1h, trend_4h = check_htf_trend(ticker)
+    trend_30m, trend_1h, trend_4h = check_htf_trend(ticker)
 
     recent_high = df_15m['High'].iloc[-20:-5].max()
     recent_low = df_15m['Low'].iloc[-20:-5].min()
@@ -139,7 +147,7 @@ def analyze_smc_setup(symbol_key):
     demand_low, supply_high = 0.0, 0.0
     buffer = 0.0005 if symbol_key == "اليورو" else (2.0 if symbol_key == "الذهب" else 100.0)
 
-    confidence = 70
+    confidence = 65
 
     if bullish_ob:
         demand_low, demand_high = round(float(bullish_ob[0]), decimals), round(float(bullish_ob[1]), decimals)
@@ -147,6 +155,7 @@ def analyze_smc_setup(symbol_key):
         if current_price <= demand_high and current_price >= (demand_low - buffer):
             if has_bullish_bos or trend_1h == "BULLISH":
                 signal = "BUY"
+                if "صاعد" in trend_30m: confidence += 10
                 if trend_1h == "BULLISH": confidence += 10
                 if trend_4h == "BULLISH": confidence += 10
                 if has_fvg: confidence += 5
@@ -157,6 +166,7 @@ def analyze_smc_setup(symbol_key):
         if current_price >= supply_low and current_price <= (supply_high + buffer):
             if has_bearish_bos or trend_1h == "BEARISH":
                 signal = "SELL"
+                if "هابط" in trend_30m: confidence += 10
                 if trend_1h == "BEARISH": confidence += 10
                 if trend_4h == "BEARISH": confidence += 10
                 if has_fvg: confidence += 5
@@ -170,6 +180,7 @@ def analyze_smc_setup(symbol_key):
         "supply_high": supply_high,
         "confidence": confidence,
         "has_fvg": "نعم (اختبار الفجوة)" if has_fvg else "لا يوجد",
+        "trend_30m": trend_30m,
         "trend_1h": "إيجابي (BOS)" if trend_1h == "BULLISH" else ("سلبي" if trend_1h == "BEARISH" else "مستقر"),
         "trend_4h": "تدفق سيولة إيجابي" if trend_4h == "BULLISH" else ("تدفق سيولة سلبي" if trend_4h == "BEARISH" else "متوازن")
     }
@@ -216,9 +227,9 @@ def background_monitor():
                             f"🎯 الهدف الأول (TP1): `{tp1}` $\n"
                             f"🎯 الهدف الثاني (TP2): `{tp2}` $\n"
                             f"🎯 الهدف الثالث (TP3): `{tp3}` $\n\n"
-                            f"⏱️ **توافق الفريمات (SMC الفعلي):**\n"
+                            f"⏱️ **تحليل الفريمات الفعلي (SMC Multi-TF):**\n"
                             f"• **15د:** Order Block مع FVG: {analysis['has_fvg']}\n"
-                            f"• **30د:** تأكيد هيكل المسار الداخلي (CHOCH)\n"
+                            f"• **30د:** {analysis['trend_30m']}\n"
                             f"• **1س:** استقرار الهيكل العام: {analysis['trend_1h']}\n"
                             f"• **4س:** حالة السيولة المؤسسية: {analysis['trend_4h']}"
                         )
@@ -295,8 +306,9 @@ def handle_text_messages(message):
             f"🧱 منطقة العرض (Supply/OB): `{analysis['supply']}`\n"
             f"⚡ الإشارة الحالية: `{analysis['signal']}`\n"
             f"🌟 نسبة دقة الفرصة: **{analysis['confidence']}%**\n\n"
-            f"🔍 **تحليل الفريمات المتقاطعة:**\n"
+            f"🔍 **تحليل الفريمات المتقاطعة (Multi-Timeframe):**\n"
             f"• **15د (FVG):** {analysis['has_fvg']}\n"
+            f"• **30د (CHOCH):** {analysis['trend_30m']}\n"
             f"• **1س (الاتجاه الرئيسي):** {analysis['trend_1h']}\n"
             f"• **4س (تدفق السيولة):** {analysis['trend_4h']}"
         )
