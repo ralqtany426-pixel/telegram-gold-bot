@@ -5,6 +5,7 @@ import telebot
 import threading
 import time
 import pandas as pd
+import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
@@ -15,15 +16,11 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-session = requests.Session()
-session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-})
-
+# استخدام رموز Yahoo Finance المباشرة والمضمونة
 SYMBOLS = {
-    "البيتكوين": "BTCUSDT",
-    "الذهب": "PAXGUSDT",
-    "اليورو": "EURUSDT"
+    "البيتكوين": "BTC-USD",
+    "الذهب": "GC=F",
+    "اليورو": "EURUSD=X"
 }
 
 last_alert_time = {
@@ -63,27 +60,24 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_ticker, interval="15min"):
-    # توحيد جلب البيانات المباشرة والدقيقة عبر Binance API لجميع الأزواج
-    binance_tf = {
-        "15min": "15m", 
-        "30min": "30m", 
-        "1hour": "1h", 
-        "4hour": "4h", 
-        "1day": "1d"
-    }.get(interval, "15m")
+    tf_map = {
+        "15min": ("15m", "1d"), 
+        "30min": ("30m", "5d"), 
+        "1hour": ("1h", "5d"), 
+        "4hour": ("1h", "1mo"), 
+        "1day": ("1d", "3mo")
+    }
+    tf, period = tf_map.get(interval, ("15m", "1d"))
     
     try:
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol_ticker}&interval={binance_tf}&limit=50"
-        res = session.get(url, timeout=5)
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, list) and len(data) > 0:
-                df = pd.DataFrame(data, columns=['time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CloseTime', 'Qav', 'NumTrades', 'Tbk', 'Tbq', 'Ignore'])
-                for col in ['Open', 'High', 'Low', 'Close']:
-                    df[col] = df[col].astype(float)
-                return df[['Open', 'High', 'Low', 'Close']].reset_index(drop=True)
+        ticker = yf.Ticker(symbol_ticker)
+        df = ticker.history(period=period, interval=tf)
+        if not df.empty and len(df) >= 5:
+            df = df.reset_index()
+            df = df.rename(columns={'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close'})
+            return df[['Open', 'High', 'Low', 'Close']]
     except Exception as e:
-        print(f"Fetch Binance Error ({symbol_ticker} - {interval}): {e}")
+        print(f"Fetch YFinance Error ({symbol_ticker} - {interval}): {e}")
 
     return pd.DataFrame()
 
@@ -118,7 +112,7 @@ def scan_high_winrate_signals(symbol_key):
         return None
 
     df = fetch_klines(ticker, "15min")
-    if df.empty or len(df) < 10:
+    if df.empty or len(df) < 5:
         return None
 
     decimals = 5 if symbol_key == "اليورو" else 2
@@ -136,13 +130,13 @@ def scan_high_winrate_signals(symbol_key):
             fvg_status = f"Bearish FVG 🔴 ({round(df['High'].iloc[i], decimals)} - {round(df['Low'].iloc[i-2], decimals)})"
             break
 
-    valid_lows = [df['Low'].iloc[i] for i in range(len(df)-15, len(df)) if df['Low'].iloc[i] < current_price]
+    valid_lows = [df['Low'].iloc[i] for i in range(max(0, len(df)-15), len(df)) if df['Low'].iloc[i] < current_price]
     if valid_lows:
         demand_low = min(valid_lows)
         demand_high = demand_low + (0.0008 if symbol_key == "اليورو" else (2.5 if symbol_key == "الذهب" else 150.0))
         bullish_ob = (round(demand_low, decimals), round(demand_high, decimals))
 
-    valid_highs = [df['High'].iloc[i] for i in range(len(df)-15, len(df)) if df['High'].iloc[i] > current_price]
+    valid_highs = [df['High'].iloc[i] for i in range(max(0, len(df)-15), len(df)) if df['High'].iloc[i] > current_price]
     if valid_highs:
         supply_high = max(valid_highs)
         supply_low = supply_high - (0.0008 if symbol_key == "اليورو" else (2.5 if symbol_key == "الذهب" else 150.0))
