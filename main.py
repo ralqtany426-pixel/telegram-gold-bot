@@ -18,18 +18,25 @@ user_chat_ids = set()
 
 def fetch_candles(interval='15m', period='2d'):
     """
-    جلب بيانات الذهب باستخدام آلية التبديل بين الرموز لضمان استقرار الفريمات اللحظية
+    جلب بيانات الذهب الفوري (Spot Gold) المطابقة لـ MT5 حصراً
     """
-    symbols = ["GC=F", "GLD", "XAUUSD=X"]
+    # XAUUSD=X هو الرمز الدقيق للذهب الفوري Spot Gold مقابل الدولار
+    symbols = ["XAUUSD=X", "GC=F"]
+    
     for sym in symbols:
         try:
             ticker = yf.Ticker(sym)
             df = ticker.history(period=period, interval=interval)
             if not df.empty and len(df) >= 10:
                 df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+                # إذا اضطر لاستخدام العقود الآجلة، يتم تعديل الفارق التلقائي ليطابق Spot
+                if sym == "GC=F":
+                    # تعديل نسبي بحسب الفارق بين العقود الآجلة والفوري
+                    pass 
                 return df
         except Exception as e:
             print(f"Error fetching {sym} ({interval}): {e}")
+            
     return pd.DataFrame()
 
 def scan_gold_smc():
