@@ -12,14 +12,14 @@ TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("لم يتم العثور على BOT_TOKEN في متغيرات البيئة!")
 
-# فارق السعر بالسالب لإنقاص السعر ومطابقة بروكر MT5 بدقة (4614$)
+# فارق سعر الذهب لمطابقة بروكر MT5
 GOLD_OFFSET = -48.46
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 SYMBOLS = {
-    "البيتكوين": "BTCUSD",
+    "البيتكوين": "BTCUSDT",
     "الذهب": "XAUUSD",
     "اليورو": "EURUSD"
 }
@@ -75,19 +75,21 @@ def fetch_klines(symbol_key, interval="15min"):
             if res.status_code == 200:
                 data = res.json()
                 df = pd.DataFrame(data, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'QAV', 'NAT', 'TBBAV', 'TBQAV', 'Ignore'])
-                return df[['Open', 'High', 'Low', 'Close']].astype(float)
+                df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+                if not df.empty:
+                    return df.reset_index(drop=True)
         except Exception as e:
             print(f"BTC Fetch Error: {e}")
 
-    # 2. جلب الذهب واليورو
+    # 2. جلب الذهب واليورو بمدد زمنية أكبر لحساب المتوسطات بأمان
     tf_map = {
-        "15min": ("15m", "2d"), 
+        "15min": ("15m", "5d"), 
         "30min": ("30m", "5d"), 
-        "1hour": ("1h", "7d"), 
+        "1hour": ("1h", "1mo"), 
         "4hour": ("1h", "1mo"), 
-        "1day": ("1d", "3mo")
+        "1day": ("1d", "6mo")
     }
-    tf, period = tf_map.get(interval, ("15m", "2d"))
+    tf, period = tf_map.get(interval, ("15m", "5d"))
     ticker = "GC=F" if symbol_key == "الذهب" else "EURUSD=X"
 
     try:
@@ -105,7 +107,7 @@ def fetch_klines(symbol_key, interval="15min"):
                     'Close': quote['close']
                 }).dropna()
 
-                if not df.empty and len(df) >= 5:
+                if not df.empty and len(df) >= 10:
                     if symbol_key == "الذهب":
                         df['Open'] += GOLD_OFFSET
                         df['High'] += GOLD_OFFSET
@@ -181,14 +183,14 @@ def scan_high_winrate_signals(symbol_key):
     demand_str = f"{bullish_ob[0]} ⟷ {bullish_ob[1]}"
     supply_str = f"{bearish_ob[0]} ⟷ {bearish_ob[1]}"
 
-    buffer = 0.0003 if symbol_key == "اليورو" else (1.5 if symbol_key == "الذهب" else 100.0)
+    buffer = 0.0003 if symbol_key == "اليورو" else (1.0 if symbol_key == "الذهب" else 50.0)
 
-    if current_price <= (bullish_ob[1] + buffer) and ("BULLISH" in trend):
+    if (bullish_ob[0] - buffer) <= current_price <= (bullish_ob[1] + buffer) and ("BULLISH" in trend):
         signal = "BUY"
-        setup_type = "اختبار أوردر بلوك شرائي متوافق مع كافة الفريمات 🚀"
-    elif current_price >= (bearish_ob[0] - buffer) and ("BEARISH" in trend):
+        setup_type = "إعادة اختبار منطقة طلب / أوردر بلوك شرائي 🚀"
+    elif (bearish_ob[0] - buffer) <= current_price <= (bearish_ob[1] + buffer) and ("BEARISH" in trend):
         signal = "SELL"
-        setup_type = "اختبار أوردر بلوك بيعي متوافق مع كافة الفريمات 📉"
+        setup_type = "إعادة اختبار منطقة عرض / أوردر بلوك بيعي 📉"
 
     return {
         "price": current_price,
@@ -289,7 +291,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم تعديل السعر ليكون مطابقتًا بالكامل لبروكر MT5."
+        f"تم تصحيح الشروط وتحديث منطق SMC لضمان إشارات عالية الدقة."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
