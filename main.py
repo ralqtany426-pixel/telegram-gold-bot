@@ -12,8 +12,8 @@ TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("لم يتم العثور على BOT_TOKEN في متغيرات البيئة!")
 
-# فارق سعر الذهب المعدل لمطابقة منصة MT5 عند سعر 4614 بالظبط
-GOLD_OFFSET = 20.26
+# فارق السعر بالسالب لإنقاص السعر ومطابقة بروكر MT5 بدقة (4614$)
+GOLD_OFFSET = -48.46
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
@@ -79,7 +79,7 @@ def fetch_klines(symbol_key, interval="15min"):
         except Exception as e:
             print(f"BTC Fetch Error: {e}")
 
-    # 2. جلب الذهب واليورو بأسعار سريعة ومستقرة بدون توقف
+    # 2. جلب الذهب واليورو
     tf_map = {
         "15min": ("15m", "2d"), 
         "30min": ("30m", "5d"), 
