@@ -1,5 +1,6 @@
 import os
 import time
+import sqlite3
 import threading
 import telebot
 import pandas as pd
@@ -14,7 +15,26 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-user_chat_ids = set()
+# --- حفظ المشتركين في قاعدة بيانات لضمان عدم ضياعهم عند Restarts ---
+DB_NAME = "users.db"
+
+def init_db():
+    with sqlite3.connect(DB_NAME) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS users (chat_id INTEGER PRIMARY KEY)")
+        conn.commit()
+
+def add_user(chat_id):
+    with sqlite3.connect(DB_NAME) as conn:
+        conn.execute("INSERT OR IGNORE INTO users (chat_id) VALUES (?)", (chat_id,))
+        conn.commit()
+
+def get_all_users():
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT chat_id FROM users")
+        return [row[0] for row in cursor.fetchall()]
+
+init_db()
 
 def fetch_candles(interval='30m', period='5d'):
     symbols = ["XAUUSD=X", "GC=F"]
@@ -24,10 +44,6 @@ def fetch_candles(interval='30m', period='5d'):
             df = ticker.history(period=period, interval=interval)
             if not df.empty and len(df) >= 5:
                 df = df[['Open', 'High', 'Low', 'Close']].astype(float)
-                if sym == "GC=F":
-                    diff = df['Close'].iloc[-1] - 4650.0 if df['Close'].iloc[-1] > 4700 else 0
-                    if diff > 30:
-                        df = df - diff
                 return df
         except Exception as e:
             print(f"Error fetching {sym} ({interval}): {e}")
@@ -131,8 +147,9 @@ def auto_alert_loop():
     last_alert_key = ""
     while True:
         try:
-            time.sleep(300)  # فحص كفاءة كل 5 دقائق لمراقبة ملامسة المناطق
-            if not user_chat_ids:
+            time.sleep(300)
+            users = get_all_users()
+            if not users:
                 continue
 
             res = scan_multi_timeframe_smc()
@@ -140,7 +157,6 @@ def auto_alert_loop():
                 p = res['price']
                 tf30 = res['30m']
 
-                # فحص ملامسة منطقة الطلب أو العرض أو صدور إشارة قوية
                 zone_alert = ""
                 if tf30['demand_low'] <= p <= tf30['demand_high']:
                     zone_alert = "🎯 **السعر يلامس منطقة الطلب (Demand OB) على فريم 30M! (فرصة شراء)**"
@@ -161,11 +177,11 @@ def auto_alert_loop():
                         f"🧱 **30M Supply:** `{tf30['supply']}`\n"
                         f"⏳ **1H Trend:** `{res['1h']['trend']}`"
                     )
-                    for chat_id in user_chat_ids:
+                    for chat_id in users:
                         try:
                             bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
                         except Exception as e:
-                            print(f"Failed alert: {e}")
+                            print(f"Failed alert to {chat_id}: {e}")
         except Exception as e:
             print(f"Error in auto_alert_loop: {e}")
 
@@ -186,7 +202,7 @@ def receive_message():
 
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
-    user_chat_ids.add(message.chat.id)
+    add_user(message.chat.id)
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn_vip = types.KeyboardButton("🔥 صفقة VIP الذهب")
     btn_gold = types.KeyboardButton("تحليل الذهب 🥇")
@@ -230,7 +246,7 @@ def process_analysis_in_background(chat_id):
 
 @bot.message_handler(func=lambda m: True)
 def handle_msg(message):
-    user_chat_ids.add(message.chat.id)
+    add_user(message.chat.id)
     bot.send_message(message.chat.id, "🔄 **جاري تحليل مناطق الطلب والعرض على فريم 30M...**")
     threading.Thread(target=process_analysis_in_background, args=(message.chat.id,), daemon=True).start()
 
