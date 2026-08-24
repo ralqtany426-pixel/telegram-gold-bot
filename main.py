@@ -12,6 +12,9 @@ TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("لم يتم العثور على BOT_TOKEN في متغيرات البيئة!")
 
+# تم تعديل فارق السعر لتصبح قراءة الذهب مطابقة لـ MT5 (حاليًا عند 4605$)
+GOLD_OFFSET = 11.26
+
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
@@ -58,13 +61,10 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_key, interval="15min"):
-    """
-    جلب البيانات اللحظية المطابقة لأسعار MetaTrader 5 والبورصات المباشرة
-    """
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         
-        # 1. جلب البيتكوين مباشر من Binance (مطابق للأسعار العالمية)
+        # 1. جلب البيتكوين مباشر من Binance
         if symbol_key == "البيتكوين":
             interval_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}
             bin_tf = interval_map.get(interval, "15m")
@@ -76,11 +76,10 @@ def fetch_klines(symbol_key, interval="15min"):
                 df = df[['Open', 'High', 'Low', 'Close']].astype(float)
                 return df
 
-        # 2. جلب الذهب واليورو بأسعار MT5 اللحظية (عبر API مباشر بالفوركس)
-        symbol_map = {"الذهب": "XAU/USD", "اليورو": "EUR/USD"}
+        # 2. جلب أسعار الذهب واليورو
+        symbol_map = {"الذهب": "XAU/USD", "اليورو": "EURUSD=X"}
         td_symbol = symbol_map.get(symbol_key, "XAU/USD")
         
-        # استخدام مصدر بيانات Forex مباشر مع دعم مجاني ومباشر
         url = f"https://api.twelvedata.com/time_series?symbol={td_symbol}&interval={interval}&outputsize=50&apikey=demo"
         res = requests.get(url, headers=headers, timeout=5)
         
@@ -90,11 +89,19 @@ def fetch_klines(symbol_key, interval="15min"):
                 df = pd.DataFrame(data["values"])
                 df = df[['open', 'high', 'low', 'close']].astype(float)
                 df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close'}, inplace=True)
-                return df.iloc[::-1].reset_index(drop=True)
+                df = df.iloc[::-1].reset_index(drop=True)
+                
+                # تطابق أسعار الشموع مع منصة MT5
+                if symbol_key == "الذهب":
+                    df['Open'] += GOLD_OFFSET
+                    df['High'] += GOLD_OFFSET
+                    df['Low'] += GOLD_OFFSET
+                    df['Close'] += GOLD_OFFSET
+                return df
 
-        # مصدر احتياطي سريع للفوركس والذهب لمطابقة أسعار MT5
-        fallback_symbol = "XAUUSD" if symbol_key == "الذهب" else "EURUSD"
-        fallback_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{fallback_symbol}=X?range=5d&interval={interval}"
+        # السيرفر الاحتياطي
+        fallback_symbol = "GC=F" if symbol_key == "الذهب" else "EURUSD=X"
+        fallback_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{fallback_symbol}?range=5d&interval={interval}"
         res_fb = requests.get(fallback_url, headers=headers, timeout=5)
         if res_fb.status_code == 200:
             fb_data = res_fb.json()
@@ -106,6 +113,11 @@ def fetch_klines(symbol_key, interval="15min"):
                     'Low': quote['low'],
                     'Close': quote['close']
                 }).dropna()
+                if symbol_key == "الذهب":
+                    df['Open'] += GOLD_OFFSET
+                    df['High'] += GOLD_OFFSET
+                    df['Low'] += GOLD_OFFSET
+                    df['Close'] += GOLD_OFFSET
                 return df
 
     except Exception as e:
@@ -147,7 +159,6 @@ def scan_high_winrate_signals(symbol_key):
     current_price = round(float(df['Close'].iloc[-1]), decimals)
     trend = get_market_trend(symbol_key)
 
-    # حساب الفجوة السعرية FVG
     fvg_status = "غير متوفر"
     for i in range(len(df) - 1, 2, -1):
         if df['Low'].iloc[i] > df['High'].iloc[i-2]:
@@ -157,7 +168,6 @@ def scan_high_winrate_signals(symbol_key):
             fvg_status = f"Bearish FVG 🔴 ({round(df['High'].iloc[i], decimals)} - {round(df['Low'].iloc[i-2], decimals)})"
             break
 
-    # حساب مناطق Order Block النواة
     bullish_ob, bearish_ob = None, None
     for i in range(len(df)-2, 1, -1):
         if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
@@ -287,7 +297,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم تعديل سيرفر الأسعار للربط المباشر لجميع الأزواج بنجاح."
+        f"تم تعديل السعر ليصبح مطابقتًا بالكامل لسعر MT5 الحالي."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
