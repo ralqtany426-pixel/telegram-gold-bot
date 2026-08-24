@@ -1,4 +1,6 @@
 import os
+import time
+import threading
 import requests
 import telebot
 import pandas as pd
@@ -13,110 +15,144 @@ bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'
 }
 
-def get_gold_data_safe():
-    """
-    جلب سعر الذهب الفوري المباشر (Spot XAUUSD) المطابق لشارت MetaTrader 5
-    """
-    # المصدر 1: Yahoo Finance Spot Rate (XAUUSD=X)
+# متغير لتخزين ID المستخدم لإرسال التنبيهات التلقائية له
+user_chat_ids = set()
+
+def fetch_candles(interval='15m', limit=40):
     try:
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?interval=15m&range=1d"
-        res = requests.get(url, headers=HEADERS, timeout=8)
+        url = f"https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval={interval}&limit={limit}"
+        res = requests.get(url, headers=HEADERS, timeout=10)
         if res.status_code == 200:
-            result = res.json()['chart']['result'][0]
-            quote = result['indicators']['quote'][0]
-            df = pd.DataFrame({
-                'Open': quote['open'],
-                'High': quote['high'],
-                'Low': quote['low'],
-                'Close': quote['close']
-            }).dropna()
-
-            if not df.empty:
-                price = float(df['Close'].iloc[-1])
-                if price > 1000:
-                    return df, price
+            raw = res.json()
+            df = pd.DataFrame(raw, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CT', 'QAV', 'NT', 'TB', 'TQ', 'I'])
+            df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+            return df
     except Exception as e:
-        print(f"Source 1 (Yahoo Spot) Failed: {e}")
-
-    # المصدر 2: Metals Dev API المباشر لأسعار الذهب الفورية
-    try:
-        url = "https://api.metals.dev/v1/latest?api_key=demo&currency=USD&unit=toz"
-        res = requests.get(url, headers=HEADERS, timeout=8)
-        if res.status_code == 200:
-            data = res.json()
-            price = float(data.get("metals", {}).get("gold", 0.0))
-            if price > 1000:
-                base_prices = [price + i for i in [-2, 1, -1, 2, -0.5, 0.5, 0]]
-                df = pd.DataFrame({
-                    'Open': base_prices,
-                    'High': [p + 1.2 for p in base_prices],
-                    'Low': [p - 1.2 for p in base_prices],
-                    'Close': base_prices
-                })
-                return df, price
-    except Exception as e:
-        print(f"Source 2 (Metals Dev) Failed: {e}")
-
-    # المصدر 3: CryptoCompare XAU (الذهب الفوري مقابل الدولار)
-    try:
-        url = "https://min-api.cryptocompare.com/data/v2/histominute?fsym=XAU&tsym=USD&limit=30&aggregate=15"
-        res = requests.get(url, headers=HEADERS, timeout=8)
-        if res.status_code == 200:
-            data = res.json().get("Data", {}).get("Data", [])
-            if data:
-                df = pd.DataFrame(data)[['open', 'high', 'low', 'close']]
-                df.columns = ['Open', 'High', 'Low', 'Close']
-                df = df.astype(float)
-                price = float(df['Close'].iloc[-1])
-                if price > 1000:
-                    return df, price
-    except Exception as e:
-        print(f"Source 3 (CryptoCompare) Failed: {e}")
-
-    return pd.DataFrame(), 0.0
+        print(f"Error fetching {interval}: {e}")
+    return pd.DataFrame()
 
 def scan_gold_smc():
-    df, current_price = get_gold_data_safe()
+    df_1h = fetch_candles(interval='1h', limit=50)
+    df_15m = fetch_candles(interval='15m', limit=40)
 
-    if df.empty or current_price == 0.0:
+    if df_15m.empty or len(df_15m) < 10:
         return None
 
-    # حساب القمم والقيعان لاستخراج مناطق SMC
-    low_val = df['Low'].min()
-    high_val = df['High'].max()
+    current_price = round(df_15m['Close'].iloc[-1], 2)
 
-    # تحديد مناطق الطلب والعرض بوضوح وبصورة ديناميكية
-    demand_min = round(low_val, 2)
-    demand_max = round(low_val + (high_val - low_val) * 0.25, 2)
+    # اتجاه فريم الساعة 1H
+    trend_1h = "BULLISH 🟢"
+    if not df_1h.empty:
+        ema_1h = df_1h['Close'].ewm(span=min(len(df_1h), 50), adjust=False).mean().iloc[-1]
+        trend_1h = "BULLISH 🟢" if current_price >= ema_1h else "BEARISH 🔴"
+
+    highs = df_15m['High']
+    lows = df_15m['Low']
     
-    supply_min = round(high_val - (high_val - low_val) * 0.25, 2)
-    supply_max = round(high_val, 2)
+    resistance = round(highs.max(), 2)
+    support = round(lows.min(), 2)
 
-    demand_zone = f"{demand_min} ⟷ {demand_max}"
-    supply_zone = f"{supply_min} ⟷ {supply_max}"
+    # Order Blocks
+    demand_ob = f"{support} ⟷ {round(support + 2.5, 2)}"
+    supply_ob = f"{round(resistance - 2.5, 2)} ⟷ {resistance}"
+    
+    for i in range(len(df_15m)-4, 2, -1):
+        if df_15m['Close'].iloc[i] < df_15m['Open'].iloc[i]:
+            if df_15m['Close'].iloc[i+1] > df_15m['High'].iloc[i]:
+                demand_ob = f"{round(df_15m['Low'].iloc[i], 2)} ⟷ {round(df_15m['High'].iloc[i], 2)}"
+                break
 
-    # إشارات SMC
-    if current_price <= demand_max:
-        signal = "BUY 🚀 (دخول ممتاز من منطقة الطلب/OB)"
-    elif current_price >= supply_min:
-        signal = "SELL 📉 (دخول ممتاز من منطقة العرض/OB)"
-    else:
-        signal = "انتظار إعادة الاختبار ⏳"
+    for i in range(len(df_15m)-4, 2, -1):
+        if df_15m['Close'].iloc[i] > df_15m['Open'].iloc[i]:
+            if df_15m['Close'].iloc[i+1] < df_15m['Low'].iloc[i]:
+                supply_ob = f"{round(df_15m['Low'].iloc[i], 2)} ⟷ {round(df_15m['High'].iloc[i], 2)}"
+                break
 
-    ema_50 = df['Close'].ewm(span=min(len(df), 50), adjust=False).mean().iloc[-1]
-    trend_str = "BULLISH 🟢" if current_price >= ema_50 else "BEARISH 🔴"
+    # FVG
+    fvg_str = "لا توجد فجوة نشطة ⚪"
+    for i in range(len(df_15m)-1, 2, -1):
+        if df_15m['High'].iloc[i-2] < df_15m['Low'].iloc[i]:
+            fvg_min = round(df_15m['High'].iloc[i-2], 2)
+            fvg_max = round(df_15m['Low'].iloc[i], 2)
+            if current_price >= fvg_min and current_price <= fvg_max + 5.0:
+                fvg_str = f"Bullish FVG 🟢 ({fvg_min} - {fvg_max})"
+                break
+        elif df_15m['Low'].iloc[i-2] > df_15m['High'].iloc[i]:
+            fvg_min = round(df_15m['High'].iloc[i], 2)
+            fvg_max = round(df_15m['Low'].iloc[i-2], 2)
+            if current_price <= fvg_max and current_price >= fvg_min - 5.0:
+                fvg_str = f"Bearish FVG 🔴 ({fvg_min} - {fvg_max})"
+                break
+
+    range_width = round(resistance - support, 2)
+    signal = "انتظار إعادة الاختبار (No Signal) ⏳"
+    
+    try:
+        d_val = float(demand_ob.split('⟷')[1].strip())
+        s_val = float(supply_ob.split('⟷')[0].strip())
+    except:
+        d_val = support + 3.0
+        s_val = resistance - 3.0
+
+    if current_price <= d_val and "BULLISH" in trend_1h:
+        signal = "BUY 🚀 (ارتداد من Demand OB + توافق اتجاه 1H)"
+    elif current_price >= s_val and "BEARISH" in trend_1h:
+        signal = "SELL 📉 (ارتداد من Supply OB + توافق اتجاه 1H)"
+    elif current_price <= d_val:
+        signal = "BUY Risk ⚠️ (دخول من الطلب ضد اتجاه 1H)"
+    elif current_price >= s_val:
+        signal = "SELL Risk ⚠️ (دخول من العرض ضد اتجاه 1H)"
 
     return {
-        "price": round(current_price, 2),
-        "signal": signal,
-        "demand": demand_zone,
-        "supply": supply_zone,
-        "fvg": f"({round(current_price - 2.0, 2)} - {round(current_price + 2.0, 2)})",
-        "trend": trend_str
+        "price": current_price,
+        "trend_1h": trend_1h,
+        "demand_ob": demand_ob,
+        "supply_ob": supply_ob,
+        "fvg": fvg_str,
+        "support": support,
+        "resistance": resistance,
+        "range_width": range_width,
+        "signal": signal
     }
+
+def auto_alert_loop():
+    """
+    دالة التنبيهات التلقائية - تعمل كل 15 دقيقة
+    """
+    last_signal = ""
+    while True:
+        try:
+            time.sleep(900)  # 900 ثانية = 15 دقيقة
+            if not user_chat_ids:
+                continue
+
+            res = scan_gold_smc()
+            if res and ("BUY" in res['signal'] or "SELL" in res['signal']):
+                # منع تكرار الإشعار لنفس الإشارة
+                if res['signal'] != last_signal:
+                    last_signal = res['signal']
+                    alert_msg = (
+                        f"🚨 **تنبيه تلقائي: فرصة دخول جديدة (SMC VIP)!**\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📍 **السعر الحقيقي:** `{res['price']}` $\n"
+                        f"⚡ **الإشارة:** `{res['signal']}`\n"
+                        f"🧱 **الطلب (OB):** `{res['demand_ob']}`\n"
+                        f"🧱 **العرض (OB):** `{res['supply_ob']}`\n"
+                        f"⏳ **الاتجاه العام (1H):** `{res['trend_1h']}`"
+                    )
+                    for chat_id in user_chat_ids:
+                        try:
+                            bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
+                        except Exception as e:
+                            print(f"Failed to send alert to {chat_id}: {e}")
+        except Exception as e:
+            print(f"Error in auto_alert_loop: {e}")
+
+# تشغيل خيط التنبيهات في الخلفية
+threading.Thread(target=auto_alert_loop, daemon=True).start()
 
 @app.route('/')
 def home():
@@ -133,27 +169,35 @@ def receive_message():
 
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
+    user_chat_ids.add(message.chat.id)
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn_vip = types.KeyboardButton("🔥 صفقة VIP الذهب")
     btn_gold = types.KeyboardButton("تحليل الذهب 🥇")
     markup.add(btn_vip, btn_gold)
-    bot.send_message(message.chat.id, "مرحباً بك! اختر الخدمة المطلوبة:", reply_markup=markup)
+    bot.send_message(
+        message.chat.id, 
+        "مرحباً بك! تم تفعيل التنبيهات التلقائية لك كل 15 دقيقة 🔔\nاختر الخدمة المطلوبة:", 
+        reply_markup=markup
+    )
 
 @bot.message_handler(func=lambda m: True)
 def handle_msg(message):
-    bot.send_message(message.chat.id, "🔄 **جاري جلب السعر والتحليل اللحظي...**")
+    user_chat_ids.add(message.chat.id)
+    bot.send_message(message.chat.id, "🔄 **جاري تحليل هيكل السوق (Multi-Timeframe SMC)...**")
     res = scan_gold_smc()
 
     if res:
         msg = (
-            f"📊 **تقرير SMC اللحظي لـ (XAU/USD (الذهب)):**\n"
+            f"📊 **التقرير المتقدم لهيكل السوق (XAU/USD - SMC Pro):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 **السعر اللحظي:** `{res['price']}`\n"
-            f"🌐 **الاتجاه العام (EMA 50):** `{res['trend']}`\n"
-            f"🧱 **منطقة الطلب (Demand/OB):** `{res['demand']}`\n"
-            f"🧱 **منطقة العرض (Supply/OB):** `{res['supply']}`\n"
+            f"📍 **السعر اللحظي:** `{res['price']}` $\n"
+            f"⏳ **اتجاه فريم الساعة (1H Trend):** `{res['trend_1h']}`\n"
+            f"🛡️ **الدعم / المقاومة:** `{res['support']}` | `{res['resistance']}`\n"
+            f"🧱 **منطقة الطلب (Demand OB):** `{res['demand_ob']}`\n"
+            f"🧱 **منطقة العرض (Supply OB):** `{res['supply_ob']}`\n"
             f"📐 **الفجوة السعرية (FVG):** `{res['fvg']}`\n"
-            f"⚡ **الإشارة الحالية:** `{res['signal']}`"
+            f"📏 **اتساع نطاق الحركة (Range):** `{res['range_width']}` $\n"
+            f"⚡ **إشارة SMC التأكيدية:** `{res['signal']}`"
         )
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
     else:
