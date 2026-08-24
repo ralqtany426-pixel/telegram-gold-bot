@@ -22,16 +22,27 @@ HEADERS = {
 user_chat_ids = set()
 
 def fetch_candles(interval='15m', limit=40):
-    try:
-        url = f"https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval={interval}&limit={limit}"
-        res = requests.get(url, headers=HEADERS, timeout=10)
-        if res.status_code == 200:
-            raw = res.json()
-            df = pd.DataFrame(raw, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CT', 'QAV', 'NT', 'TB', 'TQ', 'I'])
-            df = df[['Open', 'High', 'Low', 'Close']].astype(float)
-            return df
-    except Exception as e:
-        print(f"Error fetching {interval}: {e}")
+    # قائمة بالسيرفرات المتاحة لتفادي حظر الاستضافة
+    endpoints = [
+        "https://api.binance.com",
+        "https://api1.binance.com",
+        "https://api2.binance.com",
+        "https://api3.binance.com"
+    ]
+    
+    for base_url in endpoints:
+        try:
+            url = f"{base_url}/api/v3/klines?symbol=PAXGUSDT&interval={interval}&limit={limit}"
+            res = requests.get(url, headers=HEADERS, timeout=7)
+            if res.status_code == 200:
+                raw = res.json()
+                df = pd.DataFrame(raw, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CT', 'QAV', 'NT', 'TB', 'TQ', 'I'])
+                df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+                return df
+        except Exception as e:
+            print(f"Error fetching {interval} from {base_url}: {e}")
+            continue
+            
     return pd.DataFrame()
 
 def scan_gold_smc():
@@ -51,14 +62,14 @@ def scan_gold_smc():
 
     highs = df_15m['High']
     lows = df_15m['Low']
-    
+
     resistance = round(highs.max(), 2)
     support = round(lows.min(), 2)
 
     # Order Blocks
     demand_ob = f"{support} ⟷ {round(support + 2.5, 2)}"
     supply_ob = f"{round(resistance - 2.5, 2)} ⟷ {resistance}"
-    
+
     for i in range(len(df_15m)-4, 2, -1):
         if df_15m['Close'].iloc[i] < df_15m['Open'].iloc[i]:
             if df_15m['Close'].iloc[i+1] > df_15m['High'].iloc[i]:
@@ -89,7 +100,7 @@ def scan_gold_smc():
 
     range_width = round(resistance - support, 2)
     signal = "انتظار إعادة الاختبار (No Signal) ⏳"
-    
+
     try:
         d_val = float(demand_ob.split('⟷')[1].strip())
         s_val = float(supply_ob.split('⟷')[0].strip())
@@ -180,12 +191,9 @@ def start_cmd(message):
         reply_markup=markup
     )
 
-@bot.message_handler(func=lambda m: True)
-def handle_msg(message):
-    user_chat_ids.add(message.chat.id)
-    bot.send_message(message.chat.id, "🔄 **جاري تحليل هيكل السوق (Multi-Timeframe SMC)...**")
+def process_analysis_in_background(chat_id):
+    """ معالجة الطلب في خيط مستقل للحد من تعطل الاستجابة """
     res = scan_gold_smc()
-
     if res:
         msg = (
             f"📊 **التقرير المتقدم لهيكل السوق (XAU/USD - SMC Pro):**\n"
@@ -199,9 +207,15 @@ def handle_msg(message):
             f"📏 **اتساع نطاق الحركة (Range):** `{res['range_width']}` $\n"
             f"⚡ **إشارة SMC التأكيدية:** `{res['signal']}`"
         )
-        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+        bot.send_message(chat_id, msg, parse_mode="Markdown")
     else:
-        bot.send_message(message.chat.id, "⚠️ الخادم يواجه ضغطاً في الاتصال، يرجى إعادة الضغط مجدداً.")
+        bot.send_message(chat_id, "⚠️ يتعذر جلب البيانات السعرية حالياً، يرجى المحاولة بعد قليل.")
+
+@bot.message_handler(func=lambda m: True)
+def handle_msg(message):
+    user_chat_ids.add(message.chat.id)
+    bot.send_message(message.chat.id, "🔄 **جاري تحليل هيكل السوق (Multi-Timeframe SMC)...**")
+    threading.Thread(target=process_analysis_in_background, args=(message.chat.id,), daemon=True).start()
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
