@@ -49,7 +49,6 @@ def get_gold_data_safe():
             data = res.json()
             price = float(data.get("metals", {}).get("gold", 0.0))
             if price > 1000:
-                # إنشاء إطار بيانات لحظي حول سعر السوق للحفاظ على دقة الحسابات
                 base_prices = [price + i for i in [-2, 1, -1, 2, -0.5, 0.5, 0]]
                 df = pd.DataFrame({
                     'Open': base_prices,
@@ -85,19 +84,27 @@ def scan_gold_smc():
     if df.empty or current_price == 0.0:
         return None
 
-    # حساب مناطق SMC الحقيقية
+    # حساب القمم والقيعان لاستخراج مناطق SMC
     low_val = df['Low'].min()
     high_val = df['High'].max()
 
-    demand_zone = f"{round(low_val, 2)} ⟷ {round(low_val + 3.0, 2)}"
-    supply_zone = f"{round(high_val - 3.0, 2)} ⟷ {round(high_val, 2)}"
+    # تحديد مناطق الطلب والعرض بوضوح وبصورة ديناميكية
+    demand_min = round(low_val, 2)
+    demand_max = round(low_val + (high_val - low_val) * 0.25, 2)
+    
+    supply_min = round(high_val - (high_val - low_val) * 0.25, 2)
+    supply_max = round(high_val, 2)
+
+    demand_zone = f"{demand_min} ⟷ {demand_max}"
+    supply_zone = f"{supply_min} ⟷ {supply_max}"
 
     # إشارات SMC
-    signal = "انتظار إعادة الاختبار ⏳"
-    if current_price <= (low_val + 4.0):
-        signal = "BUY 🚀 (صفقة شراء ممتازة من منطقة الطلب)"
-    elif current_price >= (high_val - 4.0):
-        signal = "SELL 📉 (صفقة بيع ممتازة من منطقة العرض)"
+    if current_price <= demand_max:
+        signal = "BUY 🚀 (دخول ممتاز من منطقة الطلب/OB)"
+    elif current_price >= supply_min:
+        signal = "SELL 📉 (دخول ممتاز من منطقة العرض/OB)"
+    else:
+        signal = "انتظار إعادة الاختبار ⏳"
 
     ema_50 = df['Close'].ewm(span=min(len(df), 50), adjust=False).mean().iloc[-1]
     trend_str = "BULLISH 🟢" if current_price >= ema_50 else "BEARISH 🔴"
@@ -107,7 +114,7 @@ def scan_gold_smc():
         "signal": signal,
         "demand": demand_zone,
         "supply": supply_zone,
-        "fvg": f"FVG 📐 ({round(current_price - 1.5, 2)} - {round(current_price + 1.5, 2)})",
+        "fvg": f"({round(current_price - 2.0, 2)} - {round(current_price + 2.0, 2)})",
         "trend": trend_str
     }
 
@@ -139,14 +146,14 @@ def handle_msg(message):
 
     if res:
         msg = (
-            f"📊 **التقرير اللحظي للذهب (XAUUSD - MT5 Live):**\n"
+            f"📊 **تقرير SMC اللحظي لـ (XAU/USD (الذهب)):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 **السعر المباشر:** `{res['price']}` $\n"
+            f"📍 **السعر اللحظي:** `{res['price']}`\n"
             f"🌐 **الاتجاه العام (EMA 50):** `{res['trend']}`\n"
-            f"🧱 **منطقة الطلب (Demand Zone):** `{res['demand']}`\n"
-            f"🧱 **منطقة العرض (Supply Zone):** `{res['supply']}`\n"
+            f"🧱 **منطقة الطلب (Demand/OB):** `{res['demand']}`\n"
+            f"🧱 **منطقة العرض (Supply/OB):** `{res['supply']}`\n"
             f"📐 **الفجوة السعرية (FVG):** `{res['fvg']}`\n"
-            f"⚡ **إشارة SMC VIP:** `{res['signal']}`"
+            f"⚡ **الإشارة الحالية:** `{res['signal']}`"
         )
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
     else:
