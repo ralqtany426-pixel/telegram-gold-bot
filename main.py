@@ -1,7 +1,7 @@
 import os
-import requests
 import telebot
 import pandas as pd
+import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
@@ -12,35 +12,19 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-
 def fetch_gold_klines():
     """
-    جلب سعر الذهب الفوري (XAUUSD Spot) المطابق تماماً لشاشات MetaTrader 5
+    جلب بيانات سعر الذهب الفوري (GC=F / XAUUSD) مباشرة عبر yfinance
     """
     try:
-        # المصدر الأول: جلب شمعة XAU/USD الحالية الفورية مباشرة
-        url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=50"
-        res = requests.get(url, headers=HEADERS, timeout=7)
-        if res.status_code == 200:
-            df = pd.DataFrame(res.json(), columns=['Time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CT', 'QAV', 'NT', 'TB', 'TQ', 'I'])
+        # جلب بيانات 15 دقيقة لآخر يومين
+        ticker = yf.Ticker("GC=F")
+        df = ticker.history(period="2d", interval="15m")
+        if not df.empty:
             df = df[['Open', 'High', 'Low', 'Close']].astype(float)
             return df.reset_index(drop=True)
     except Exception as e:
-        print(f"Primary Fetch Error: {e}")
-
-    # المصدر الاحتياطي الفوري في حال التعثر
-    try:
-        url = "https://min-api.cryptocompare.com/data/v2/histominute?fsym=XAU&tsym=USD&limit=50&aggregate=15"
-        res = requests.get(url, headers=HEADERS, timeout=7)
-        if res.status_code == 200:
-            data = res.json().get("Data", {}).get("Data", [])
-            if data:
-                df = pd.DataFrame(data)[['open', 'high', 'low', 'close']]
-                df.columns = ['Open', 'High', 'Low', 'Close']
-                return df.astype(float).reset_index(drop=True)
-    except Exception as e:
-        print(f"Backup Fetch Error: {e}")
+        print(f"yfinance Fetch Error: {e}")
 
     return pd.DataFrame()
 
@@ -74,8 +58,8 @@ def check_bos_and_ob(df):
                 if df['Close'].iloc[i] > df['Open'].iloc[i]:
                     bearish_ob = (round(df['Low'].iloc[i], 2), round(df['High'].iloc[i], 2))
                     break
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"BOS Error: {e}")
 
     return bullish_ob, bearish_ob
 
