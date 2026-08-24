@@ -169,6 +169,7 @@ def scan_high_winrate_signals(symbol_key):
             fvg_status = f"Bearish FVG 🔴 ({round(df['High'].iloc[i], decimals)} - {round(df['Low'].iloc[i-2], decimals)})"
             break
 
+    # البحث عن مناطق الطلب والعرض الحقيقية فقط
     bullish_ob, bearish_ob = None, None
     for i in range(len(df)-2, 1, -1):
         if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
@@ -180,24 +181,37 @@ def scan_high_winrate_signals(symbol_key):
             bearish_ob = (round(df['Low'].iloc[i], decimals), round(df['High'].iloc[i], decimals))
             break
 
-    if not bullish_ob:
-        bullish_ob = (round(current_price - (0.0020 if symbol_key == "اليورو" else 3.5), decimals), round(current_price - (0.0008 if symbol_key == "اليورو" else 1.0), decimals))
-    if not bearish_ob:
-        bearish_ob = (round(current_price + (0.0008 if symbol_key == "اليورو" else 1.0), decimals), round(current_price + (0.0020 if symbol_key == "اليورو" else 3.5), decimals))
+    # إلغاء المناطق الوهمية في حال عدم رصد مناطق حقيقية
+    if not bullish_ob or not bearish_ob:
+        return {
+            "price": current_price, "signal": "NONE", "setup_type": "",
+            "demand": "غير متوفر", "supply": "غير متوفر",
+            "demand_low": current_price, "supply_high": current_price,
+            "fvg": fvg_status, "trend": trend
+        }
 
     signal = "NONE"
     setup_type = ""
     demand_str = f"{bullish_ob[0]} ⟷ {bullish_ob[1]}"
     supply_str = f"{bearish_ob[0]} ⟷ {bearish_ob[1]}"
 
-    buffer = 0.0003 if symbol_key == "اليورو" else (1.0 if symbol_key == "الذهب" else 50.0)
+    buffer = 0.0002 if symbol_key == "اليورو" else (0.5 if symbol_key == "الذهب" else 25.0)
 
-    if (bullish_ob[0] - buffer) <= current_price <= (bullish_ob[1] + buffer) and ("BULLISH" in trend):
+    # 1. شرط الشراء: السعر داخل/عند منطقة الطلب + عدم الاصطدام بمنطقة العرض + اتجاه صاعد
+    in_demand = (bullish_ob[0] - buffer) <= current_price <= (bullish_ob[1] + buffer)
+    near_supply = current_price >= (bearish_ob[0] - buffer)
+
+    if in_demand and not near_supply and ("BULLISH" in trend):
         signal = "BUY"
-        setup_type = "إعادة اختبار منطقة طلب / أوردر بلوك شرائي 🚀"
-    elif (bearish_ob[0] - buffer) <= current_price <= (bearish_ob[1] + buffer) and ("BEARISH" in trend):
+        setup_type = "إعادة اختبار منطقة طلب 🚀"
+
+    # 2. شرط البيع: السعر داخل/عند منطقة العرض + عدم الاصطدام بمنطقة الطلب + اتجاه هابط
+    in_supply = (bearish_ob[0] - buffer) <= current_price <= (bearish_ob[1] + buffer)
+    near_demand = current_price <= (bullish_ob[1] + buffer)
+
+    if in_supply and not near_demand and ("BEARISH" in trend):
         signal = "SELL"
-        setup_type = "إعادة اختبار منطقة عرض / أوردر بلوك بيعي 📉"
+        setup_type = "إعادة اختبار منطقة عرض 📉"
 
     return {
         "price": current_price,
