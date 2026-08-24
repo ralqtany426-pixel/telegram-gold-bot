@@ -17,24 +17,22 @@ app = Flask(__name__)
 
 SYMBOLS = {
     "البيتكوين": "BTCUSDT",
-    "الذهب": "XAUUSD",
-    "اليورو": "EURUSD"
+    "الذهب": "XAUUSD"
 }
 
 last_alert_time = {
     "الذهب": 0,
-    "اليورو": 0,
     "البيتكوين": 0
 }
 
-# جلسة Requests متكاملة لتفادي الحظر
 session = requests.Session()
 session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
 })
 
 def get_db_connection():
-    conn = sqlite3.connect('bot_users.db', timeout=15)
+    conn = sqlite3.connect('bot_users.db', timeout=20)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL;')
     return conn
@@ -74,13 +72,12 @@ def get_alert_users():
 
 def fetch_klines(symbol_key, interval="15min"):
     interval_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}
-    bin_tf = interval_map.get(interval, "15m")
-
-    # جلب سعر البيتكوين والذهب الفوري (Spot/MT5) مباشرة عبر Binance API
-    if symbol_key in ["البيتكوين", "الذهب"]:
-        bin_symbol = "BTCUSDT" if symbol_key == "البيتكوين" else "PAXGUSDT"
+    
+    # 1. جلب سعر البيتكوين مباشرة من Binance
+    if symbol_key == "البيتكوين":
+        bin_tf = interval_map.get(interval, "15m")
         try:
-            url = f"https://api.binance.com/api/v3/klines?symbol={bin_symbol}&interval={bin_tf}&limit=50"
+            url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={bin_tf}&limit=50"
             res = session.get(url, timeout=7)
             if res.status_code == 200:
                 data = res.json()
@@ -88,9 +85,9 @@ def fetch_klines(symbol_key, interval="15min"):
                 df = df[['Open', 'High', 'Low', 'Close']].astype(float)
                 return df.reset_index(drop=True)
         except Exception as e:
-            print(f"{symbol_key} Fetch Error: {e}")
+            print(f"BTC Fetch Error: {e}")
 
-    # جلب اليورو من Yahoo Finance
+    # 2. جلب سعر الذهب الفوري من Yahoo Finance (GC=F)
     tf_map = {
         "15min": ("15m", "2d"), 
         "30min": ("30m", "5d"), 
@@ -101,7 +98,7 @@ def fetch_klines(symbol_key, interval="15min"):
     tf, period = tf_map.get(interval, ("15m", "2d"))
 
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?range={period}&interval={tf}"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range={period}&interval={tf}"
         res = session.get(url, timeout=7)
         if res.status_code == 200:
             data = res.json()
@@ -114,10 +111,11 @@ def fetch_klines(symbol_key, interval="15min"):
                     'Low': quote['low'],
                     'Close': quote['close']
                 }).dropna()
+                
                 if not df.empty and len(df) >= 5:
                     return df.reset_index(drop=True)
     except Exception as e:
-        print(f"Yahoo Fetch Error (EURUSD): {e}")
+        print(f"Gold Fetch Error: {e}")
 
     return pd.DataFrame()
 
@@ -149,7 +147,7 @@ def scan_high_winrate_signals(symbol_key):
     if df.empty or len(df) < 5:
         return None
 
-    decimals = 5 if symbol_key == "اليورو" else 2
+    decimals = 2
     current_price = round(float(df['Close'].iloc[-1]), decimals)
     trend = get_market_trend(symbol_key)
 
@@ -186,7 +184,7 @@ def scan_high_winrate_signals(symbol_key):
     demand_str = f"{bullish_ob[0]} ⟷ {bullish_ob[1]}"
     supply_str = f"{bearish_ob[0]} ⟷ {bearish_ob[1]}"
 
-    buffer = 0.0002 if symbol_key == "اليورو" else (0.5 if symbol_key == "الذهب" else 25.0)
+    buffer = 0.5 if symbol_key == "الذهب" else 25.0
 
     in_demand = (bullish_ob[0] - buffer) <= current_price <= (bullish_ob[1] + buffer)
     near_supply = current_price >= (bearish_ob[0] - buffer)
@@ -226,8 +224,8 @@ def background_monitor():
                         last_alert_time[name] = current_timestamp
                         price = analysis["price"]
                         users = get_alert_users()
-                        decimals = 5 if name == "اليورو" else 2
-                        sl_offset = 0.0006 if name == "اليورو" else (2.5 if name == "الذهب" else 150.0)
+                        decimals = 2
+                        sl_offset = 2.5 if name == "الذهب" else 150.0
 
                         if analysis["signal"] == "BUY":
                             sl = round(analysis["demand_low"] - sl_offset, decimals)
@@ -295,16 +293,15 @@ def start_command(message):
 
     btn_vip = types.KeyboardButton("🔥 صفقات VIP (SMC / OB / S&D)")
     btn_gold = types.KeyboardButton("الذهب 🥇")
-    btn_euro = types.KeyboardButton("اليورو/دولار 💶")
     btn_btc = types.KeyboardButton("البيتكوين ₿")
 
     markup.add(btn_vip)
-    markup.add(btn_gold, btn_euro, btn_btc)
+    markup.add(btn_gold, btn_btc)
 
     welcome_text = (
         f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم تحديث منطق SMC وتحسين استجابة الخادم لضمان أداء مستقر وإشارات دقيقة."
+        f"تم إصلاح السيرفر وتصحيح مصادر بيانات الذهب والبيتكوين."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
@@ -323,8 +320,8 @@ def handle_text_messages(message):
             if analysis and analysis["signal"] != "NONE":
                 found_any = True
                 price = analysis["price"]
-                decimals = 5 if key == "اليورو" else 2
-                sl_offset = 0.0006 if key == "اليورو" else (2.5 if key == "الذهب" else 150.0)
+                decimals = 2
+                sl_offset = 2.5 if key == "الذهب" else 150.0
 
                 if analysis["signal"] == "BUY":
                     sl = round(analysis["demand_low"] - sl_offset, decimals)
@@ -366,8 +363,6 @@ def handle_text_messages(message):
         selected_key = "البيتكوين"
     elif "ذهب" in text or "XAU" in text.upper() or "🥇" in text:
         selected_key = "الذهب"
-    elif "يورو" in text or "EUR" in text.upper() or "💶" in text:
-        selected_key = "اليورو"
 
     if selected_key:
         bot.send_message(chat_id, f"🔄 **جاري جلب بيانات {selected_key}...**")
@@ -377,7 +372,7 @@ def handle_text_messages(message):
             bot.send_message(chat_id, f"⚠️ تعذر جلب البيانات لـ {selected_key} حالياً.")
             return
 
-        pair_name = "XAU/USD (الذهب)" if selected_key == "الذهب" else ("EUR/USD (اليورو)" if selected_key == "اليورو" else "BTC/USDT (البيتكوين)")
+        pair_name = "XAU/USD (الذهب)" if selected_key == "الذهب" else "BTC/USDT (البيتكوين)"
 
         msg = (
             f"📊 **التقرير اللحظي المتقدم لـ ({pair_name}):**\n"
