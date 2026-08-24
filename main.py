@@ -45,7 +45,7 @@ def fetch_candles(interval='30m', period='5d'):
             df = ticker.history(period=period, interval=interval)
             if not df.empty and len(df) >= 5:
                 df = df[['Open', 'High', 'Low', 'Close']].astype(float)
-                
+
                 # ضبط السعر تلقائياً إذا تم الاعتماد على العقود الآجلة GC=F
                 if sym == "GC=F":
                     last_close = df['Close'].iloc[-1]
