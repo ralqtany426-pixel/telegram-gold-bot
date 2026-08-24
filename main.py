@@ -18,11 +18,11 @@ user_chat_ids = set()
 
 def fetch_candles(interval='15m', period='2d'):
     """
-    جلب بيانات الذهب من Yahoo Finance لتفادي حظر Binance
+    جلب بيانات الذهب الفوري (Spot Gold) لتطابق أسعار MT5
     """
     try:
-        # GC=F هو رمز العقود الآجلة للذهب
-        ticker = yf.Ticker("GC=F")
+        # XAUUSD=X يجلب سعر الذهب الفوري المباشر مقابل الدولار
+        ticker = yf.Ticker("XAUUSD=X")
         df = ticker.history(period=period, interval=interval)
         if not df.empty and len(df) >= 10:
             df = df[['Open', 'High', 'Low', 'Close']].astype(float)
@@ -32,7 +32,6 @@ def fetch_candles(interval='15m', period='2d'):
     return pd.DataFrame()
 
 def scan_gold_smc():
-    # جلب بيانات فريم 1H وفريم 15M
     df_1h = fetch_candles(interval='1h', period='5d')
     df_15m = fetch_candles(interval='15m', period='2d')
 
@@ -41,7 +40,6 @@ def scan_gold_smc():
 
     current_price = round(df_15m['Close'].iloc[-1], 2)
 
-    # اتجاه فريم الساعة 1H
     trend_1h = "BULLISH 🟢"
     if not df_1h.empty:
         ema_1h = df_1h['Close'].ewm(span=min(len(df_1h), 50), adjust=False).mean().iloc[-1]
@@ -53,7 +51,6 @@ def scan_gold_smc():
     resistance = round(highs.max(), 2)
     support = round(lows.min(), 2)
 
-    # Order Blocks
     demand_ob = f"{support} ⟷ {round(support + 2.5, 2)}"
     supply_ob = f"{round(resistance - 2.5, 2)} ⟷ {resistance}"
 
@@ -69,7 +66,6 @@ def scan_gold_smc():
                 supply_ob = f"{round(df_15m['Low'].iloc[i], 2)} ⟷ {round(df_15m['High'].iloc[i], 2)}"
                 break
 
-    # FVG
     fvg_str = "لا توجد فجوة نشطة ⚪"
     for i in range(len(df_15m)-1, 2, -1):
         if df_15m['High'].iloc[i-2] < df_15m['Low'].iloc[i]:
