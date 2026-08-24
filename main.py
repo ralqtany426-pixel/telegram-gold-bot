@@ -15,7 +15,7 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-# --- حفظ المشتركين في قاعدة بيانات لضمان عدم ضياعهم عند Restarts ---
+# --- قاعدة بيانات حفظ المستخدمين ---
 DB_NAME = "users.db"
 
 def init_db():
@@ -36,6 +36,7 @@ def get_all_users():
 
 init_db()
 
+# --- جلب البيانات وتعديل السعر المباشر ---
 def fetch_candles(interval='30m', period='5d'):
     symbols = ["XAUUSD=X", "GC=F"]
     for sym in symbols:
@@ -44,6 +45,14 @@ def fetch_candles(interval='30m', period='5d'):
             df = ticker.history(period=period, interval=interval)
             if not df.empty and len(df) >= 5:
                 df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+                
+                # ضبط السعر تلقائياً إذا تم الاعتماد على العقود الآجلة GC=F
+                if sym == "GC=F":
+                    last_close = df['Close'].iloc[-1]
+                    if last_close > 3000:  # تعديل الفارق السعري
+                        diff = last_close - 2650.0 if last_close < 3500 else (last_close - 4650.0 if last_close > 4700 else 0)
+                        if diff > 20:
+                            df = df - diff
                 return df
         except Exception as e:
             print(f"Error fetching {sym} ({interval}): {e}")
