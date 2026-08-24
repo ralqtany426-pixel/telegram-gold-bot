@@ -1,7 +1,7 @@
 import os
+import requests
 import telebot
 import pandas as pd
-import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
@@ -12,19 +12,57 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+}
+
 def fetch_gold_klines():
     """
-    جلب بيانات سعر الذهب الفوري (GC=F / XAUUSD) مباشرة عبر yfinance
+    جلب سعر الذهب الفوري (XAUUSD) عبر 3 مصادر موثوقة تضمن عدم الحظر
     """
+    # المصدر 1: GoldAPI المباشر عبر السيرفر العام
     try:
-        # جلب بيانات 15 دقيقة لآخر يومين
-        ticker = yf.Ticker("GC=F")
-        df = ticker.history(period="2d", interval="15m")
-        if not df.empty:
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=1d"
+        res = requests.get(url, headers=HEADERS, timeout=5)
+        if res.status_code == 200:
+            result = res.json()['chart']['result'][0]
+            quote = result['indicators']['quote'][0]
+            df = pd.DataFrame({
+                'Open': quote['open'],
+                'High': quote['high'],
+                'Low': quote['low'],
+                'Close': quote['close']
+            }).dropna().reset_index(drop=True)
+            if not df.empty and len(df) >= 10:
+                return df
+    except Exception as e:
+        print(f"Source 1 Error: {e}")
+
+    # المصدر 2: CryptoCompare XAU/USD
+    try:
+        url = "https://min-api.cryptocompare.com/data/v2/histominute?fsym=XAU&tsym=USD&limit=50&aggregate=15"
+        res = requests.get(url, headers=HEADERS, timeout=5)
+        if res.status_code == 200:
+            data = res.json().get("Data", {}).get("Data", [])
+            if data:
+                df = pd.DataFrame(data)[['open', 'high', 'low', 'close']]
+                df.columns = ['Open', 'High', 'Low', 'Close']
+                df = df.astype(float)
+                if not df.empty and df['Close'].iloc[-1] > 0:
+                    return df.reset_index(drop=True)
+    except Exception as e:
+        print(f"Source 2 Error: {e}")
+
+    # المصدر 3: PAXGUSDT المباشر من Binance كملاذ أخير
+    try:
+        url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=50"
+        res = requests.get(url, headers=HEADERS, timeout=5)
+        if res.status_code == 200:
+            df = pd.DataFrame(res.json(), columns=['Time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CT', 'QAV', 'NT', 'TB', 'TQ', 'I'])
             df = df[['Open', 'High', 'Low', 'Close']].astype(float)
             return df.reset_index(drop=True)
     except Exception as e:
-        print(f"yfinance Fetch Error: {e}")
+        print(f"Source 3 Error: {e}")
 
     return pd.DataFrame()
 
@@ -59,7 +97,7 @@ def check_bos_and_ob(df):
                     bearish_ob = (round(df['Low'].iloc[i], 2), round(df['High'].iloc[i], 2))
                     break
     except Exception as e:
-        print(f"BOS Error: {e}")
+        print(f"BOS Calculation Error: {e}")
 
     return bullish_ob, bearish_ob
 
