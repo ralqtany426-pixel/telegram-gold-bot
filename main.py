@@ -12,8 +12,8 @@ TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("لم يتم العثور على BOT_TOKEN في متغيرات البيئة!")
 
-# فارق سعر الذهب لمطابقة منصة MT5
-GOLD_OFFSET = 11.26
+# فارق سعر الذهب المعدل لمطابقة منصة MT5 عند سعر 4614 بالظبط
+GOLD_OFFSET = 20.26
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
@@ -64,7 +64,7 @@ def fetch_klines(symbol_key, interval="15min"):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
     }
-    
+
     # 1. جلب البيتكوين من Binance
     if symbol_key == "البيتكوين":
         try:
@@ -289,7 +289,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم حل مشكلة جلب البيانات وإضافة فارق الأسعار بنجاح."
+        f"تم تعديل السعر ليكون مطابقتًا بالكامل لبروكر MT5."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
