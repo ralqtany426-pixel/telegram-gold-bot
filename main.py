@@ -17,9 +17,9 @@ bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 SYMBOLS = {
-    "البيتكوين": "BTC-USD",
-    "الذهب": "XAUUSD=X",
-    "اليورو": "EURUSD=X"
+    "البيتكوين": "BTCUSD",
+    "الذهب": "XAUUSD",
+    "اليورو": "EURUSD"
 }
 
 last_alert_time = {
@@ -58,7 +58,7 @@ def get_alert_users():
         print(f"Error fetching users: {e}")
         return []
 
-def fetch_klines(symbol_ticker, interval="15min"):
+def fetch_klines(symbol_key, interval="15min"):
     tf_map = {
         "15min": ("15m", "1d"), 
         "30min": ("30m", "5d"), 
@@ -68,12 +68,15 @@ def fetch_klines(symbol_ticker, interval="15min"):
     }
     tf, period = tf_map.get(interval, ("15m", "1d"))
 
-    # استهداف الذهب الفوري المباشر XAUUSD=X أولاً
-    tickers = [symbol_ticker]
-    if "XAU" in symbol_ticker or "GC" in symbol_ticker:
-        tickers = ["XAUUSD=X", "GC=F"]
-
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    # استخدام رموز Yahoo المحدثة مع جلب البيانات المباشرة
+    ticker_map = {
+        "الذهب": ["XAUUSD=X", "GC=F"],
+        "اليورو": ["EURUSD=X"],
+        "البيتكوين": ["BTC-USD"]
+    }
+    
+    tickers = ticker_map.get(symbol_key, ["XAUUSD=X"])
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
     for sym in tickers:
         try:
@@ -90,26 +93,19 @@ def fetch_klines(symbol_ticker, interval="15min"):
                         'Low': quote['low'],
                         'Close': quote['close']
                     }).dropna()
+                    
                     if not df.empty and len(df) >= 5:
                         return df
-        except Exception:
-            pass
-
-        try:
-            df = yf.Ticker(sym).history(period=period, interval=tf)
-            if not df.empty and len(df) >= 5:
-                df = df.reset_index()
-                return df[['Open', 'High', 'Low', 'Close']]
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Fetch Error ({sym}): {e}")
 
     return pd.DataFrame()
 
-def get_market_trend(ticker):
-    df_1d = fetch_klines(ticker, "1day")
-    df_4h = fetch_klines(ticker, "4hour")
-    df_1h = fetch_klines(ticker, "1hour")
-    df_30m = fetch_klines(ticker, "30min")
+def get_market_trend(symbol_key):
+    df_1d = fetch_klines(symbol_key, "1day")
+    df_4h = fetch_klines(symbol_key, "4hour")
+    df_1h = fetch_klines(symbol_key, "1hour")
+    df_30m = fetch_klines(symbol_key, "30min")
 
     if df_1d.empty or df_4h.empty or df_1h.empty or df_30m.empty:
         return "NEUTRAL ⚖️"
@@ -131,18 +127,15 @@ def get_market_trend(ticker):
     return "NEUTRAL ⚖️"
 
 def scan_high_winrate_signals(symbol_key):
-    ticker = SYMBOLS.get(symbol_key)
-    if not ticker:
-        return None
-
-    df = fetch_klines(ticker, "15min")
+    df = fetch_klines(symbol_key, "15min")
     if df.empty or len(df) < 5:
         return None
 
     decimals = 5 if symbol_key == "اليورو" else 2
     current_price = round(float(df['Close'].iloc[-1]), decimals)
-    trend = get_market_trend(ticker)
+    trend = get_market_trend(symbol_key)
 
+    # حساب الفجوة السعرية FVG
     fvg_status = "غير متوفر"
     for i in range(len(df) - 1, 2, -1):
         if df['Low'].iloc[i] > df['High'].iloc[i-2]:
@@ -152,7 +145,7 @@ def scan_high_winrate_signals(symbol_key):
             fvg_status = f"Bearish FVG 🔴 ({round(df['High'].iloc[i], decimals)} - {round(df['Low'].iloc[i-2], decimals)})"
             break
 
-    # حساب الأوردر بلوك النواة SMC (آخر شمعة هابطة قبل الصعود أو عكسها)
+    # حساب مناطق Order Block النواة
     bullish_ob, bearish_ob = None, None
     for i in range(len(df)-2, 1, -1):
         if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
@@ -165,9 +158,9 @@ def scan_high_winrate_signals(symbol_key):
             break
 
     if not bullish_ob:
-        bullish_ob = (round(current_price * 0.997, decimals), round(current_price * 0.999, decimals))
+        bullish_ob = (round(current_price - (0.0020 if symbol_key == "اليورو" else 3.5), decimals), round(current_price - (0.0008 if symbol_key == "اليورو" else 1.0), decimals))
     if not bearish_ob:
-        bearish_ob = (round(current_price * 1.001, decimals), round(current_price * 1.003, decimals))
+        bearish_ob = (round(current_price + (0.0008 if symbol_key == "اليورو" else 1.0), decimals), round(current_price + (0.0020 if symbol_key == "اليورو" else 3.5), decimals))
 
     signal = "NONE"
     setup_type = ""
@@ -178,10 +171,10 @@ def scan_high_winrate_signals(symbol_key):
 
     if current_price <= (bullish_ob[1] + buffer) and ("BULLISH" in trend):
         signal = "BUY"
-        setup_type = "اختبار أوردر بلوك شرائي متوافق مع كافة الفريمات والمؤشرات 🚀"
+        setup_type = "اختبار أوردر بلوك شرائي متوافق مع كافة الفريمات 🚀"
     elif current_price >= (bearish_ob[0] - buffer) and ("BEARISH" in trend):
         signal = "SELL"
-        setup_type = "اختبار أوردر بلوك بيعي متوافق مع كافة الفريمات والمؤشرات 📉"
+        setup_type = "اختبار أوردر بلوك بيعي متوافق مع كافة الفريمات 📉"
 
     return {
         "price": current_price,
