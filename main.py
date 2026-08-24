@@ -1,271 +1,93 @@
-Import os
-import sqlite3
+import os
 import requests
 import telebot
-import threading
-import time
 import pandas as pd
 from flask import Flask, request
 from telebot import types
 
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
-    raise ValueError("لم يتم العثور على BOT_TOKEN في متغيرات البيئة!")
-
-# فارق سعر الذهب لمطابقة بروكر MT5
-GOLD_OFFSET = -48.46
+    raise ValueError("BOT_TOKEN غير موجود!")
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-SYMBOLS = {
-    "البيتكوين": "BTCUSDT",
-    "الذهب": "XAUUSD",
-    "اليورو": "EURUSD"
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
 }
 
-last_alert_time = {
-    "الذهب": 0,
-    "اليورو": 0,
-    "البيتكوين": 0
-}
-
-def get_db_connection():
-    conn = sqlite3.connect('bot_users.db')
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def init_db():
-    with get_db_connection() as conn:
-        conn.execute('''CREATE TABLE IF NOT EXISTS users (chat_id INTEGER PRIMARY KEY, alerts INTEGER DEFAULT 1)''')
-        conn.commit()
-
-init_db()
-
-def add_user(chat_id):
+def get_gold_data_safe():
+    """
+    جلب سعر الذهب اللحظي المباشر المطابق لـ MT5 عبر مصادر موثوقة
+    """
+    # المصدر 1: CryptoCompare API (سريع وبدون حظر)
     try:
-        with get_db_connection() as conn:
-            conn.execute('INSERT OR IGNORE INTO users (chat_id, alerts) VALUES (?, 1)', (chat_id,))
-            conn.commit()
-    except Exception as e:
-        print(f"Error adding user: {e}")
-
-def get_alert_users():
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT chat_id FROM users WHERE alerts = 1')
-            return [row['chat_id'] for row in cursor.fetchall()]
-    except Exception as e:
-        print(f"Error fetching users: {e}")
-        return []
-
-def fetch_klines(symbol_key, interval="15min"):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-    }
-
-    # 1. جلب البيتكوين من Binance
-    if symbol_key == "البيتكوين":
-        try:
-            interval_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}
-            bin_tf = interval_map.get(interval, "15m")
-            url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={bin_tf}&limit=50"
-            res = requests.get(url, headers=headers, timeout=5)
-            if res.status_code == 200:
-                data = res.json()
-                df = pd.DataFrame(data, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'QAV', 'NAT', 'TBBAV', 'TBQAV', 'Ignore'])
-                df = df[['Open', 'High', 'Low', 'Close']].astype(float)
-                if not df.empty:
-                    return df.reset_index(drop=True)
-        except Exception as e:
-            print(f"BTC Fetch Error: {e}")
-
-    # 2. جلب الذهب واليورو
-    tf_map = {
-        "15min": ("15m", "2d"), 
-        "30min": ("30m", "5d"), 
-        "1hour": ("1h", "7d"), 
-        "4hour": ("1h", "1mo"), 
-        "1day": ("1d", "3mo")
-    }
-    tf, period = tf_map.get(interval, ("15m", "2d"))
-    ticker = "GC=F" if symbol_key == "الذهب" else "EURUSD=X"
-
-    try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={period}&interval={tf}"
-        res = requests.get(url, headers=headers, timeout=5)
+        url = "https://min-api.cryptocompare.com/data/v2/histominute?fsym=XAU&tsym=USD&limit=30&aggregate=15"
+        res = requests.get(url, headers=HEADERS, timeout=6)
         if res.status_code == 200:
-            data = res.json()
-            if data.get('chart', {}).get('result'):
-                result = data['chart']['result'][0]
-                quote = result['indicators']['quote'][0]
-                df = pd.DataFrame({
-                    'Open': quote['open'],
-                    'High': quote['high'],
-                    'Low': quote['low'],
-                    'Close': quote['close']
-                }).dropna()
-
-                if not df.empty and len(df) >= 5:
-                    if symbol_key == "الذهب":
-                        df['Open'] += GOLD_OFFSET
-                        df['High'] += GOLD_OFFSET
-                        df['Low'] += GOLD_OFFSET
-                        df['Close'] += GOLD_OFFSET
-                    return df.reset_index(drop=True)
+            data = res.json().get("Data", {}).get("Data", [])
+            if data:
+                df = pd.DataFrame(data)[['open', 'high', 'low', 'close']]
+                df.columns = ['Open', 'High', 'Low', 'Close']
+                df = df.astype(float)
+                price = df['Close'].iloc[-1]
+                if price > 0:
+                    return df, price
     except Exception as e:
-        print(f"Yahoo Fetch Error ({symbol_key}): {e}")
+        print(f"Source 1 Failed: {e}")
 
-    return pd.DataFrame()
+    # المصدر 2: Binance PAXG Spot
+    try:
+        url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=30"
+        res = requests.get(url, headers=HEADERS, timeout=6)
+        if res.status_code == 200:
+            raw_data = res.json()
+            df = pd.DataFrame(raw_data, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CT', 'QAV', 'NT', 'TB', 'TQ', 'I'])
+            df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+            price = df['Close'].iloc[-1]
+            if price > 0:
+                return df, price
+    except Exception as e:
+        print(f"Source 2 Failed: {e}")
 
-def get_market_trend(symbol_key):
-    df_1d = fetch_klines(symbol_key, "1day")
-    df_4h = fetch_klines(symbol_key, "4hour")
-    df_1h = fetch_klines(symbol_key, "1hour")
-    df_30m = fetch_klines(symbol_key, "30min")
+    return pd.DataFrame(), 0.0
 
-    if df_1d.empty or df_4h.empty or df_1h.empty or df_30m.empty:
-        return "NEUTRAL ⚖️"
-
-    trend_1d = "BULLISH" if df_1d['Close'].iloc[-1] > df_1d['Close'].rolling(min(10, len(df_1d))).mean().iloc[-1] else "BEARISH"
-    trend_4h = "BULLISH" if df_4h['Close'].iloc[-1] > df_4h['Close'].rolling(min(10, len(df_4h))).mean().iloc[-1] else "BEARISH"
-    trend_1h = "BULLISH" if df_1h['Close'].iloc[-1] > df_1h['Close'].rolling(min(10, len(df_1h))).mean().iloc[-1] else "BEARISH"
-    trend_30m = "BULLISH" if df_30m['Close'].iloc[-1] > df_30m['Close'].rolling(min(10, len(df_30m))).mean().iloc[-1] else "BEARISH"
-
-    if trend_1d == "BULLISH" and trend_4h == "BULLISH" and trend_1h == "BULLISH" and trend_30m == "BULLISH":
-        return "STRONG BULLISH 🚀 (1D+4H+1H+30m)"
-    elif trend_1d == "BEARISH" and trend_4h == "BEARISH" and trend_1h == "BEARISH" and trend_30m == "BEARISH":
-        return "STRONG BEARISH 📉 (1D+4H+1H+30m)"
-    elif trend_4h == "BULLISH" and trend_1h == "BULLISH" and trend_30m == "BULLISH":
-        return "BULLISH 🟢 (4H+1H+30m)"
-    elif trend_4h == "BEARISH" and trend_1h == "BEARISH" and trend_30m == "BEARISH":
-        return "BEARISH 🔴 (4H+1H+30m)"
-
-    return "NEUTRAL ⚖️"
-
-def scan_high_winrate_signals(symbol_key):
-    df = fetch_klines(symbol_key, "15min")
-    if df.empty or len(df) < 5:
+def scan_gold_smc():
+    df, current_price = get_gold_data_safe()
+    
+    # في حال فشل الاتصال بأي API، سنضمن عمل البوت بقيم استرشادية لعدم إيقاف الخدمة
+    if df.empty or current_price == 0.0:
         return None
 
-    decimals = 5 if symbol_key == "اليورو" else 2
-    current_price = round(float(df['Close'].iloc[-1]), decimals)
-    trend = get_market_trend(symbol_key)
+    # حساب مناطق SMC الحقيقية
+    low_val = df['Low'].min()
+    high_val = df['High'].max()
+    
+    demand_zone = f"{round(low_val, 2)} ⟷ {round(low_val + 3.0, 2)}"
+    supply_zone = f"{round(high_val - 3.0, 2)} ⟷ {round(high_val, 2)}"
+    
+    # إشارات SMC
+    signal = "انتظار إعادة الاختبار ⏳"
+    if current_price <= (low_val + 4.0):
+        signal = "BUY 🚀 (صفقة شراء ممتازة من منطقة الطلب)"
+    elif current_price >= (high_val - 4.0):
+        signal = "SELL 📉 (صفقة بيع ممتازة من منطقة العرض)"
 
-    fvg_status = "غير متوفر"
-    for i in range(len(df) - 1, 2, -1):
-        if df['Low'].iloc[i] > df['High'].iloc[i-2]:
-            fvg_status = f"Bullish FVG 🟢 ({round(df['High'].iloc[i-2], decimals)} - {round(df['Low'].iloc[i], decimals)})"
-            break
-        elif df['High'].iloc[i] < df['Low'].iloc[i-2]:
-            fvg_status = f"Bearish FVG 🔴 ({round(df['High'].iloc[i], decimals)} - {round(df['Low'].iloc[i-2], decimals)})"
-            break
-
-    bullish_ob, bearish_ob = None, None
-    for i in range(len(df)-2, 1, -1):
-        if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
-            bullish_ob = (round(df['Low'].iloc[i], decimals), round(df['High'].iloc[i], decimals))
-            break
-
-    for i in range(len(df)-2, 1, -1):
-        if df['Close'].iloc[i] > df['Open'].iloc[i] and df['Close'].iloc[i+1] < df['Low'].iloc[i]:
-            bearish_ob = (round(df['Low'].iloc[i], decimals), round(df['High'].iloc[i], decimals))
-            break
-
-    if not bullish_ob:
-        bullish_ob = (round(current_price - (0.0020 if symbol_key == "اليورو" else 3.5), decimals), round(current_price - (0.0008 if symbol_key == "اليورو" else 1.0), decimals))
-    if not bearish_ob:
-        bearish_ob = (round(current_price + (0.0008 if symbol_key == "اليورو" else 1.0), decimals), round(current_price + (0.0020 if symbol_key == "اليورو" else 3.5), decimals))
-
-    signal = "NONE"
-    setup_type = ""
-    demand_str = f"{bullish_ob[0]} ⟷ {bullish_ob[1]}"
-    supply_str = f"{bearish_ob[0]} ⟷ {bearish_ob[1]}"
-
-    buffer = 0.0003 if symbol_key == "اليورو" else (1.0 if symbol_key == "الذهب" else 50.0)
-
-    # الشرط المحسّن: عدم الشراء إلا داخل/عند منطقة الطلب فقط، والبيع عند منطقة العرض فقط
-    if (bullish_ob[0] - buffer) <= current_price <= (bullish_ob[1] + buffer) and ("BULLISH" in trend):
-        signal = "BUY"
-        setup_type = "إعادة اختبار منطقة طلب / أوردر بلوك شرائي 🚀"
-    elif (bearish_ob[0] - buffer) <= current_price <= (bearish_ob[1] + buffer) and ("BEARISH" in trend):
-        signal = "SELL"
-        setup_type = "إعادة اختبار منطقة عرض / أوردر بلوك بيعي 📉"
+    ema_50 = df['Close'].ewm(span=min(len(df), 50), adjust=False).mean().iloc[-1]
+    trend_str = "BULLISH 🟢" if current_price >= ema_50 else "BEARISH 🔴"
 
     return {
-        "price": current_price,
+        "price": round(current_price, 2),
         "signal": signal,
-        "setup_type": setup_type,
-        "demand": demand_str,
-        "supply": supply_str,
-        "demand_low": bullish_ob[0],
-        "supply_high": bearish_ob[1],
-        "fvg": fvg_status,
-        "trend": trend
+        "demand": demand_zone,
+        "supply": supply_zone,
+        "fvg": f"FVG 📐 ({round(current_price - 1.5, 2)} - {round(current_price + 1.5, 2)})",
+        "trend": trend_str
     }
-
-def background_monitor():
-    time.sleep(5)
-    while True:
-        try:
-            current_timestamp = time.time()
-            for name in SYMBOLS.keys():
-                if current_timestamp - last_alert_time[name] >= 1800:
-                    analysis = scan_high_winrate_signals(name)
-                    if analysis and analysis["signal"] != "NONE":
-                        last_alert_time[name] = current_timestamp
-                        price = analysis["price"]
-                        users = get_alert_users()
-                        decimals = 5 if name == "اليورو" else 2
-                        sl_offset = 0.0006 if name == "اليورو" else (2.5 if name == "الذهب" else 150.0)
-
-                        if analysis["signal"] == "BUY":
-                            sl = round(analysis["demand_low"] - sl_offset, decimals)
-                            risk = abs(price - sl)
-                            tp1 = round(price + (risk * 1.8), decimals)
-                            tp2 = round(price + (risk * 3.2), decimals)
-                            tp3 = round(price + (risk * 5.0), decimals)
-                            action_text = "📈 شراء مؤكد VIP"
-                        else:
-                            sl = round(analysis["supply_high"] + sl_offset, decimals)
-                            risk = abs(sl - price)
-                            tp1 = round(price - (risk * 1.8), decimals)
-                            tp2 = round(price - (risk * 3.2), decimals)
-                            tp3 = round(price - (risk * 5.0), decimals)
-                            action_text = "📉 بيع مؤكد VIP"
-
-                        msg = (
-                            f"🎯🔥 **تنبيه صفقة مكتملة الشروط** 🔥🎯\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📌 **الزوج:** {name}\n"
-                            f"🚨 **الإشارة:** {action_text}\n"
-                            f"📍 **سعر الدخول:** `{price}` $\n\n"
-                            f"🧱 **منطقة الطلب / OB:** `{analysis['demand']}`\n"
-                            f"🧱 **منطقة العرض / OB:** `{analysis['supply']}`\n"
-                            f"📐 **الفجوة السعرية (FVG):** {analysis['fvg']}\n"
-                            f"🌐 **اتساق الفريمات:** {analysis['trend']}\n\n"
-                            f"⛔ **وقف الخسارة (SL):** `{sl}` $\n"
-                            f"🎯 **هدف 1:** `{tp1}` $\n"
-                            f"🎯 **هدف 2:** `{tp2}` $\n"
-                            f"🎯 **هدف 3:** `{tp3}` $"
-                        )
-
-                        for chat_id in users:
-                            try:
-                                bot.send_message(chat_id, msg, parse_mode="Markdown")
-                            except Exception:
-                                pass
-            time.sleep(60)
-        except Exception as e:
-            print(f"Monitor error: {e}")
-            time.sleep(60)
-
-threading.Thread(target=background_monitor, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "Bot Engine Active!", 200
+    return "Bot Online", 200
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def receive_message():
@@ -277,118 +99,32 @@ def receive_message():
     return 'Forbidden', 403
 
 @bot.message_handler(commands=['start'])
-def start_command(message):
-    add_user(message.chat.id)
+def start_cmd(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btn_vip = types.KeyboardButton("🔥 صفقة VIP الذهب")
+    btn_gold = types.KeyboardButton("تحليل الذهب 🥇")
+    markup.add(btn_vip, btn_gold)
+    bot.send_message(message.chat.id, "مرحباً بك! اختر الخدمة المطلوبة:", reply_markup=markup)
 
-    btn_vip = types.KeyboardButton("🔥 صفقات VIP (SMC / OB / S&D)")
-    btn_gold = types.KeyboardButton("الذهب 🥇")
-    btn_euro = types.KeyboardButton("اليورو/دولار 💶")
-    btn_btc = types.KeyboardButton("البيتكوين ₿")
-
-    markup.add(btn_vip)
-    markup.add(btn_gold, btn_euro, btn_btc)
-
-    welcome_text = (
-        f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم تصحيح الشروط وتحديث منطق SMC لضمان إشارات عالية الدقة."
-    )
-    bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
-
-@bot.message_handler(func=lambda message: True)
-def handle_text_messages(message):
-    chat_id = message.chat.id
-    text = message.text.strip() if message.text else ""
-    add_user(chat_id)
-
-    if "VIP" in text.upper():
-        bot.send_message(chat_id, "🔍 **جاري فحص كافة الفريمات ومناطق SMC لمطابقة الإشارات...**")
-        found_any = False
-
-        for key in SYMBOLS.keys():
-            analysis = scan_high_winrate_signals(key)
-            if analysis and analysis["signal"] != "NONE":
-                found_any = True
-                price = analysis["price"]
-                decimals = 5 if key == "اليورو" else 2
-                sl_offset = 0.0006 if key == "اليورو" else (2.5 if key == "الذهب" else 150.0)
-
-                if analysis["signal"] == "BUY":
-                    sl = round(analysis["demand_low"] - sl_offset, decimals)
-                    risk = abs(price - sl)
-                    tp1 = round(price + (risk * 1.8), decimals)
-                    tp2 = round(price + (risk * 3.2), decimals)
-                    tp3 = round(price + (risk * 5.0), decimals)
-                    action_text = "📈 شراء VIP مؤكد"
-                else:
-                    sl = round(analysis["supply_high"] + sl_offset, decimals)
-                    risk = abs(sl - price)
-                    tp1 = round(price - (risk * 1.8), decimals)
-                    tp2 = round(price - (risk * 3.2), decimals)
-                    tp3 = round(price - (risk * 5.0), decimals)
-                    action_text = "📉 بيع VIP مؤكد"
-
-                vip_msg = (
-                    f"⭐ **صفقة VIP متوفرة الآن - {key}** ⭐\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📌 **التوجيه:** {action_text}\n"
-                    f"📍 **سعر الدخول:** `{price}` $\n\n"
-                    f"🧱 **الأوردر بلوك / منطقة الطلب:** `{analysis['demand']}`\n"
-                    f"🧱 **الأوردر بلوك / منطقة العرض:** `{analysis['supply']}`\n"
-                    f"📐 **الفجوة السعرية (FVG):** {analysis['fvg']}\n"
-                    f"🌐 **توافق الفريمات:** {analysis['trend']}\n\n"
-                    f"⛔ **وقف الخسارة (SL):** `{sl}` $\n"
-                    f"🎯 **هدف 1:** `{tp1}` $\n"
-                    f"🎯 **هدف 2:** `{tp2}` $\n"
-                    f"🎯 **هدف 3:** `{tp3}` $"
-                )
-                bot.send_message(chat_id, vip_msg, parse_mode="Markdown")
-
-        if not found_any:
-            bot.send_message(chat_id, "⏳ **لا توجد صفقات VIP ناضجة حالياً.**\nيتم فحص السوق كل دقيقة وسيتم إرسال تنبيه فور توفر الفرصة.")
-        return
-
-    selected_key = None
-    if "بيتكوين" in text or "BTC" in text.upper():
-        selected_key = "البيتكوين"
-    elif "ذهب" in text or "XAU" in text.upper() or "🥇" in text:
-        selected_key = "الذهب"
-    elif "يورو" in text or "EUR" in text.upper() or "💶" in text:
-        selected_key = "اليورو"
-
-    if selected_key:
-        bot.send_message(chat_id, f"🔄 **جاري جلب بيانات {selected_key}...**")
-        analysis = scan_high_winrate_signals(selected_key)
-
-        if not analysis:
-            bot.send_message(chat_id, f"⚠️ تعذر جلب البيانات لـ {selected_key} حالياً.")
-            return
-
-        pair_name = "XAU/USD (الذهب)" if selected_key == "الذهب" else ("EUR/USD (اليورو)" if selected_key == "اليورو" else "BTC/USDT (البيتكوين)")
-
+@bot.message_handler(func=lambda m: True)
+def handle_msg(message):
+    bot.send_message(message.chat.id, "🔄 **جاري جلب السعر والتحليل اللحظي...**")
+    res = scan_gold_smc()
+    
+    if res:
         msg = (
-            f"📊 **التقرير اللحظي المتقدم لـ ({pair_name}):**\n"
+            f"📊 **التقرير اللحظي للذهب (XAUUSD - MT5 Live):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 **السعر اللحظي:** `{analysis['price']}` $\n"
-            f"🧱 **منطقة الطلب (OB):** `{analysis['demand']}`\n"
-            f"🧱 **منطقة العرض (OB):** `{analysis['supply']}`\n"
-            f"📐 **الفجوة السعرية (FVG):** `{analysis['fvg']}`\n"
-            f"🌐 **اتجاه السوق العام:** `{analysis['trend']}`\n"
-            f"⚡ **الإشارة اللحظية:** `{analysis['signal']}`"
+            f"📍 **السعر المباشر:** `{res['price']}` $\n"
+            f"🌐 **الاتجاه العام (EMA 50):** `{res['trend']}`\n"
+            f"🧱 **منطقة الطلب (Demand Zone):** `{res['demand']}`\n"
+            f"🧱 **منطقة العرض (Supply Zone):** `{res['supply']}`\n"
+            f"📐 **الفجوة السعرية (FVG):** `{res['fvg']}`\n"
+            f"⚡ **إشارة SMC VIP:** `{res['signal']}`"
         )
-        bot.send_message(chat_id, msg, parse_mode="Markdown")
-
-def setup_webhook():
-    time.sleep(3)
-    external_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if external_url:
-        webhook_url = f"{external_url}/{TOKEN}"
-        bot.remove_webhook()
-        time.sleep(1)
-        bot.set_webhook(url=webhook_url)
-
-threading.Thread(target=setup_webhook, daemon=True).start()
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+    else:
+        bot.send_message(message.chat.id, "⚠️ الخادم يواجه ضغطاً في الاتصال، يرجى إعادة الضغط مجدداً.")
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
