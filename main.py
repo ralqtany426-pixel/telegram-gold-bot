@@ -6,13 +6,12 @@ import threading
 import time
 import pandas as pd
 from flask import Flask, request
-from telebot import types
+from telebot import types, apihelper
 
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("لم يتم العثور على BOT_TOKEN في متغيرات البيئة!")
 
-# فارق سعر الذهب لمطابقة بروكر MT5
 GOLD_OFFSET = -48.46
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
@@ -30,9 +29,17 @@ last_alert_time = {
     "البيتكوين": 0
 }
 
+# جلسة Requests متكاملة لتفادي الحظر
+session = requests.Session()
+session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+})
+
 def get_db_connection():
-    conn = sqlite3.connect('bot_users.db')
+    # تعيين timeout وتفعيل خاصية WAL لتفادي قفل قاعدة البيانات
+    conn = sqlite3.connect('bot_users.db', timeout=15)
     conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA journal_mode=WAL;')
     return conn
 
 def init_db():
@@ -50,6 +57,14 @@ def add_user(chat_id):
     except Exception as e:
         print(f"Error adding user: {e}")
 
+def remove_user(chat_id):
+    try:
+        with get_db_connection() as conn:
+            conn.execute('DELETE FROM users WHERE chat_id = ?', (chat_id,))
+            conn.commit()
+    except Exception as e:
+        print(f"Error removing user {chat_id}: {e}")
+
 def get_alert_users():
     try:
         with get_db_connection() as conn:
@@ -61,27 +76,20 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_key, interval="15min"):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-    }
-
-    # 1. جلب البيتكوين من Binance
     if symbol_key == "البيتكوين":
         try:
             interval_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}
             bin_tf = interval_map.get(interval, "15m")
             url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={bin_tf}&limit=50"
-            res = requests.get(url, headers=headers, timeout=5)
+            res = session.get(url, timeout=7)
             if res.status_code == 200:
                 data = res.json()
                 df = pd.DataFrame(data, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'QAV', 'NAT', 'TBBAV', 'TBQAV', 'Ignore'])
                 df = df[['Open', 'High', 'Low', 'Close']].astype(float)
-                if not df.empty:
-                    return df.reset_index(drop=True)
+                return df.reset_index(drop=True)
         except Exception as e:
             print(f"BTC Fetch Error: {e}")
 
-    # 2. جلب الذهب واليورو
     tf_map = {
         "15min": ("15m", "2d"), 
         "30min": ("30m", "5d"), 
@@ -94,7 +102,7 @@ def fetch_klines(symbol_key, interval="15min"):
 
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={period}&interval={tf}"
-        res = requests.get(url, headers=headers, timeout=5)
+        res = session.get(url, timeout=7)
         if res.status_code == 200:
             data = res.json()
             if data.get('chart', {}).get('result'):
@@ -120,27 +128,26 @@ def fetch_klines(symbol_key, interval="15min"):
     return pd.DataFrame()
 
 def get_market_trend(symbol_key):
+    # تقليل عدد الفريمات لتقليل الطلبات وحماية السيرفر من الحظر
     df_1d = fetch_klines(symbol_key, "1day")
     df_4h = fetch_klines(symbol_key, "4hour")
     df_1h = fetch_klines(symbol_key, "1hour")
-    df_30m = fetch_klines(symbol_key, "30min")
 
-    if df_1d.empty or df_4h.empty or df_1h.empty or df_30m.empty:
+    if df_1d.empty or df_4h.empty or df_1h.empty:
         return "NEUTRAL ⚖️"
 
     trend_1d = "BULLISH" if df_1d['Close'].iloc[-1] > df_1d['Close'].rolling(min(10, len(df_1d))).mean().iloc[-1] else "BEARISH"
     trend_4h = "BULLISH" if df_4h['Close'].iloc[-1] > df_4h['Close'].rolling(min(10, len(df_4h))).mean().iloc[-1] else "BEARISH"
     trend_1h = "BULLISH" if df_1h['Close'].iloc[-1] > df_1h['Close'].rolling(min(10, len(df_1h))).mean().iloc[-1] else "BEARISH"
-    trend_30m = "BULLISH" if df_30m['Close'].iloc[-1] > df_30m['Close'].rolling(min(10, len(df_30m))).mean().iloc[-1] else "BEARISH"
 
-    if trend_1d == "BULLISH" and trend_4h == "BULLISH" and trend_1h == "BULLISH" and trend_30m == "BULLISH":
-        return "STRONG BULLISH 🚀 (1D+4H+1H+30m)"
-    elif trend_1d == "BEARISH" and trend_4h == "BEARISH" and trend_1h == "BEARISH" and trend_30m == "BEARISH":
-        return "STRONG BEARISH 📉 (1D+4H+1H+30m)"
-    elif trend_4h == "BULLISH" and trend_1h == "BULLISH" and trend_30m == "BULLISH":
-        return "BULLISH 🟢 (4H+1H+30m)"
-    elif trend_4h == "BEARISH" and trend_1h == "BEARISH" and trend_30m == "BEARISH":
-        return "BEARISH 🔴 (4H+1H+30m)"
+    if trend_1d == "BULLISH" and trend_4h == "BULLISH" and trend_1h == "BULLISH":
+        return "STRONG BULLISH 🚀 (1D+4H+1H)"
+    elif trend_1d == "BEARISH" and trend_4h == "BEARISH" and trend_1h == "BEARISH":
+        return "STRONG BEARISH 📉 (1D+4H+1H)"
+    elif trend_4h == "BULLISH" and trend_1h == "BULLISH":
+        return "BULLISH 🟢 (4H+1H)"
+    elif trend_4h == "BEARISH" and trend_1h == "BEARISH":
+        return "BEARISH 🔴 (4H+1H)"
 
     return "NEUTRAL ⚖️"
 
@@ -185,7 +192,6 @@ def scan_high_winrate_signals(symbol_key):
 
     buffer = 0.0003 if symbol_key == "اليورو" else (1.0 if symbol_key == "الذهب" else 50.0)
 
-    # الشرط المحسّن: عدم الشراء إلا داخل/عند منطقة الطلب فقط، والبيع عند منطقة العرض فقط
     if (bullish_ob[0] - buffer) <= current_price <= (bullish_ob[1] + buffer) and ("BULLISH" in trend):
         signal = "BUY"
         setup_type = "إعادة اختبار منطقة طلب / أوردر بلوك شرائي 🚀"
@@ -254,6 +260,9 @@ def background_monitor():
                         for chat_id in users:
                             try:
                                 bot.send_message(chat_id, msg, parse_mode="Markdown")
+                            except apihelper.ApiTelegramException as e:
+                                if "bot was blocked by the user" in e.description:
+                                    remove_user(chat_id)
                             except Exception:
                                 pass
             time.sleep(60)
@@ -292,7 +301,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم تصحيح الشروط وتحديث منطق SMC لضمان إشارات عالية الدقة."
+        f"تم تحديث منطق SMC وتحسين استجابة الخادم لضمان أداء مستقر وإشارات دقيقة."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
@@ -346,7 +355,7 @@ def handle_text_messages(message):
                 bot.send_message(chat_id, vip_msg, parse_mode="Markdown")
 
         if not found_any:
-            bot.send_message(chat_id, "⏳ **لا توجد صفقات VIP ناضجة حالياً.**\nيتم فحص السوق كل دقيقة وسيتم إرسال تنبيه فور توفر الفرصة.")
+            bot.send_message(chat_id, "⏳ **لا توجد صفقات VIP ناضجة حالياً.**\nيتم فحص السوق تلقائياً وسيتم إرسال تنبيه فور توفر الفرصة.")
         return
 
     selected_key = None
