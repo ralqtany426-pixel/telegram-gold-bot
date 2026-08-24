@@ -1,9 +1,9 @@
 import os
 import time
 import threading
-import requests
 import telebot
 import pandas as pd
+import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
@@ -14,40 +14,27 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'
-}
-
-# متغير لتخزين ID المستخدم لإرسال التنبيهات التلقائية له
 user_chat_ids = set()
 
-def fetch_candles(interval='15m', limit=40):
-    # قائمة بالسيرفرات المتاحة لتفادي حظر الاستضافة
-    endpoints = [
-        "https://api.binance.com",
-        "https://api1.binance.com",
-        "https://api2.binance.com",
-        "https://api3.binance.com"
-    ]
-    
-    for base_url in endpoints:
-        try:
-            url = f"{base_url}/api/v3/klines?symbol=PAXGUSDT&interval={interval}&limit={limit}"
-            res = requests.get(url, headers=HEADERS, timeout=7)
-            if res.status_code == 200:
-                raw = res.json()
-                df = pd.DataFrame(raw, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CT', 'QAV', 'NT', 'TB', 'TQ', 'I'])
-                df = df[['Open', 'High', 'Low', 'Close']].astype(float)
-                return df
-        except Exception as e:
-            print(f"Error fetching {interval} from {base_url}: {e}")
-            continue
-            
+def fetch_candles(interval='15m', period='2d'):
+    """
+    جلب بيانات الذهب من Yahoo Finance لتفادي حظر Binance
+    """
+    try:
+        # GC=F هو رمز العقود الآجلة للذهب
+        ticker = yf.Ticker("GC=F")
+        df = ticker.history(period=period, interval=interval)
+        if not df.empty and len(df) >= 10:
+            df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+            return df
+    except Exception as e:
+        print(f"Error fetching yfinance ({interval}): {e}")
     return pd.DataFrame()
 
 def scan_gold_smc():
-    df_1h = fetch_candles(interval='1h', limit=50)
-    df_15m = fetch_candles(interval='15m', limit=40)
+    # جلب بيانات فريم 1H وفريم 15M
+    df_1h = fetch_candles(interval='1h', period='5d')
+    df_15m = fetch_candles(interval='15m', period='2d')
 
     if df_15m.empty or len(df_15m) < 10:
         return None
@@ -130,19 +117,15 @@ def scan_gold_smc():
     }
 
 def auto_alert_loop():
-    """
-    دالة التنبيهات التلقائية - تعمل كل 15 دقيقة
-    """
     last_signal = ""
     while True:
         try:
-            time.sleep(900)  # 900 ثانية = 15 دقيقة
+            time.sleep(900)
             if not user_chat_ids:
                 continue
 
             res = scan_gold_smc()
             if res and ("BUY" in res['signal'] or "SELL" in res['signal']):
-                # منع تكرار الإشعار لنفس الإشارة
                 if res['signal'] != last_signal:
                     last_signal = res['signal']
                     alert_msg = (
@@ -162,7 +145,6 @@ def auto_alert_loop():
         except Exception as e:
             print(f"Error in auto_alert_loop: {e}")
 
-# تشغيل خيط التنبيهات في الخلفية
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
 @app.route('/')
@@ -192,7 +174,6 @@ def start_cmd(message):
     )
 
 def process_analysis_in_background(chat_id):
-    """ معالجة الطلب في خيط مستقل للحد من تعطل الاستجابة """
     res = scan_gold_smc()
     if res:
         msg = (
