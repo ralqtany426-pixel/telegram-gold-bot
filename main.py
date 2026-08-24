@@ -72,7 +72,7 @@ def get_alert_users():
 
 def fetch_klines(symbol_key, interval="15min"):
     interval_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}
-    
+
     # 1. جلب البيتكوين حصرياً من Binance
     if symbol_key == "البيتكوين":
         bin_tf = interval_map.get(interval, "15m")
@@ -88,7 +88,7 @@ def fetch_klines(symbol_key, interval="15min"):
             print(f"BTC Fetch Error: {e}")
         return pd.DataFrame()
 
-    # 2. جلب الذهب حصرياً عبر مكتبة yfinance (GC=F) لمنع التداخل
+    # 2. جلب الذهب الفوري المطابق لمنصات MT5 عبر XAUUSD=X
     tf_map = {
         "15min": ("15m", "2d"), 
         "30min": ("30m", "5d"), 
@@ -99,13 +99,13 @@ def fetch_klines(symbol_key, interval="15min"):
     tf, period = tf_map.get(interval, ("15m", "2d"))
 
     try:
-        ticker = yf.Ticker("GC=F")
+        ticker = yf.Ticker("XAUUSD=X")
         df = ticker.history(period=period, interval=tf)
         if not df.empty:
             df = df[['Open', 'High', 'Low', 'Close']].reset_index(drop=True)
             return df
     except Exception as e:
-        print(f"Gold Fetch Error: {e}")
+        print(f"Gold Spot Fetch Error: {e}")
 
     return pd.DataFrame()
 
@@ -291,7 +291,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم إفصال جلب بيانات الذهب عن البيتكوين بشكل كامل."
+        f"تم تصحيح جلب الذهب إلى XAUUSD المطابق لمنصات MetaTrader 5."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
