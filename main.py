@@ -12,14 +12,14 @@ TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("لم يتم العثور على BOT_TOKEN في متغيرات البيئة!")
 
-# فارق السعر بالسالب لإنقاص السعر ومطابقة بروكر MT5 بدقة (4614$)
+# فارق سعر الذهب لمطابقة بروكر MT5 (4614$)
 GOLD_OFFSET = -48.46
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 SYMBOLS = {
-    "البيتكوين": "BTCUSD",
+    "البيتكوين": "BTCUSDT",
     "الذهب": "XAUUSD",
     "اليورو": "EURUSD"
 }
@@ -65,7 +65,7 @@ def fetch_klines(symbol_key, interval="15min"):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
     }
 
-    # 1. جلب البيتكوين من Binance
+    # 1. جلب البيتكوين بآلية مضمونة من Binance
     if symbol_key == "البيتكوين":
         try:
             interval_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}
@@ -75,11 +75,13 @@ def fetch_klines(symbol_key, interval="15min"):
             if res.status_code == 200:
                 data = res.json()
                 df = pd.DataFrame(data, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'QAV', 'NAT', 'TBBAV', 'TBQAV', 'Ignore'])
-                return df[['Open', 'High', 'Low', 'Close']].astype(float)
+                df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+                if not df.empty:
+                    return df.reset_index(drop=True)
         except Exception as e:
             print(f"BTC Fetch Error: {e}")
 
-    # 2. جلب الذهب واليورو
+    # 2. جلب الذهب واليورو بأسعار سريعة ومستقرة
     tf_map = {
         "15min": ("15m", "2d"), 
         "30min": ("30m", "5d"), 
@@ -289,7 +291,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم تعديل السعر ليكون مطابقتًا بالكامل لبروكر MT5."
+        f"تم تعديل بيانت البيتكوين وتثبيت فارق الذهب بصلابة."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
