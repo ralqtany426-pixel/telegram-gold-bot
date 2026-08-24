@@ -81,15 +81,15 @@ def fetch_klines(symbol_key, interval="15min"):
         except Exception as e:
             print(f"BTC Fetch Error: {e}")
 
-    # 2. جلب الذهب واليورو (تم زيادة المدى المرجعي لضمان اكتمال حركة المتوسطات)
+    # 2. جلب الذهب واليورو
     tf_map = {
-        "15min": ("15m", "5d"), 
+        "15min": ("15m", "2d"), 
         "30min": ("30m", "5d"), 
-        "1hour": ("1h", "1mo"), 
+        "1hour": ("1h", "7d"), 
         "4hour": ("1h", "1mo"), 
-        "1day": ("1d", "6mo")
+        "1day": ("1d", "3mo")
     }
-    tf, period = tf_map.get(interval, ("15m", "5d"))
+    tf, period = tf_map.get(interval, ("15m", "2d"))
     ticker = "GC=F" if symbol_key == "الذهب" else "EURUSD=X"
 
     try:
@@ -107,7 +107,7 @@ def fetch_klines(symbol_key, interval="15min"):
                     'Close': quote['close']
                 }).dropna()
 
-                if not df.empty and len(df) >= 10:
+                if not df.empty and len(df) >= 5:
                     if symbol_key == "الذهب":
                         df['Open'] += GOLD_OFFSET
                         df['High'] += GOLD_OFFSET
@@ -185,6 +185,7 @@ def scan_high_winrate_signals(symbol_key):
 
     buffer = 0.0003 if symbol_key == "اليورو" else (1.0 if symbol_key == "الذهب" else 50.0)
 
+    # الشرط المحسّن: عدم الشراء إلا داخل/عند منطقة الطلب فقط، والبيع عند منطقة العرض فقط
     if (bullish_ob[0] - buffer) <= current_price <= (bullish_ob[1] + buffer) and ("BULLISH" in trend):
         signal = "BUY"
         setup_type = "إعادة اختبار منطقة طلب / أوردر بلوك شرائي 🚀"
