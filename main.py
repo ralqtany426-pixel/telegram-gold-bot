@@ -13,24 +13,29 @@ bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 }
 
 def get_gold_data_safe():
     """
-    جلب سعر الذهب اللحظي المباشر المطابق لـ MT5 عبر مصادر موثوقة
+    جلب سعر الذهب اللحظي المباشر عبر 3 مصادر موثوقة ومضمونة
     """
-    # المصدر 1: CryptoCompare API (سريع وبدون حظر)
+    # المصدر 1: Yahoo Finance Direct Chart API (سريع وبدون حظر)
     try:
-        url = "https://min-api.cryptocompare.com/data/v2/histominute?fsym=XAU&tsym=USD&limit=30&aggregate=15"
-        res = requests.get(url, headers=HEADERS, timeout=6)
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=1d"
+        res = requests.get(url, headers=HEADERS, timeout=12)
         if res.status_code == 200:
-            data = res.json().get("Data", {}).get("Data", [])
-            if data:
-                df = pd.DataFrame(data)[['open', 'high', 'low', 'close']]
-                df.columns = ['Open', 'High', 'Low', 'Close']
-                df = df.astype(float)
-                price = df['Close'].iloc[-1]
+            result = res.json()['chart']['result'][0]
+            quote = result['indicators']['quote'][0]
+            df = pd.DataFrame({
+                'Open': quote['open'],
+                'High': quote['high'],
+                'Low': quote['low'],
+                'Close': quote['close']
+            }).dropna()
+            
+            if not df.empty:
+                price = float(df['Close'].iloc[-1])
                 if price > 0:
                     return df, price
     except Exception as e:
@@ -39,33 +44,48 @@ def get_gold_data_safe():
     # المصدر 2: Binance PAXG Spot
     try:
         url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=30"
-        res = requests.get(url, headers=HEADERS, timeout=6)
+        res = requests.get(url, headers=HEADERS, timeout=12)
         if res.status_code == 200:
             raw_data = res.json()
             df = pd.DataFrame(raw_data, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CT', 'QAV', 'NT', 'TB', 'TQ', 'I'])
             df = df[['Open', 'High', 'Low', 'Close']].astype(float)
-            price = df['Close'].iloc[-1]
+            price = float(df['Close'].iloc[-1])
             if price > 0:
                 return df, price
     except Exception as e:
         print(f"Source 2 Failed: {e}")
 
+    # المصدر 3: CryptoCompare API
+    try:
+        url = "https://min-api.cryptocompare.com/data/v2/histominute?fsym=XAU&tsym=USD&limit=30&aggregate=15"
+        res = requests.get(url, headers=HEADERS, timeout=12)
+        if res.status_code == 200:
+            data = res.json().get("Data", {}).get("Data", [])
+            if data:
+                df = pd.DataFrame(data)[['open', 'high', 'low', 'close']]
+                df.columns = ['Open', 'High', 'Low', 'Close']
+                df = df.astype(float)
+                price = float(df['Close'].iloc[-1])
+                if price > 0:
+                    return df, price
+    except Exception as e:
+        print(f"Source 3 Failed: {e}")
+
     return pd.DataFrame(), 0.0
 
 def scan_gold_smc():
     df, current_price = get_gold_data_safe()
-    
-    # في حال فشل الاتصال بأي API، سنضمن عمل البوت بقيم استرشادية لعدم إيقاف الخدمة
+
     if df.empty or current_price == 0.0:
         return None
 
     # حساب مناطق SMC الحقيقية
     low_val = df['Low'].min()
     high_val = df['High'].max()
-    
+
     demand_zone = f"{round(low_val, 2)} ⟷ {round(low_val + 3.0, 2)}"
     supply_zone = f"{round(high_val - 3.0, 2)} ⟷ {round(high_val, 2)}"
-    
+
     # إشارات SMC
     signal = "انتظار إعادة الاختبار ⏳"
     if current_price <= (low_val + 4.0):
@@ -110,7 +130,7 @@ def start_cmd(message):
 def handle_msg(message):
     bot.send_message(message.chat.id, "🔄 **جاري جلب السعر والتحليل اللحظي...**")
     res = scan_gold_smc()
-    
+
     if res:
         msg = (
             f"📊 **التقرير اللحظي للذهب (XAUUSD - MT5 Live):**\n"
