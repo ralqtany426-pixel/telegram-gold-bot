@@ -12,8 +12,6 @@ TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("لم يتم العثور على BOT_TOKEN في متغيرات البيئة!")
 
-GOLD_OFFSET = -48.46
-
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
@@ -36,7 +34,6 @@ session.headers.update({
 })
 
 def get_db_connection():
-    # تعيين timeout وتفعيل خاصية WAL لتفادي قفل قاعدة البيانات
     conn = sqlite3.connect('bot_users.db', timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL;')
@@ -76,11 +73,14 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_key, interval="15min"):
-    if symbol_key == "البيتكوين":
+    interval_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}
+    bin_tf = interval_map.get(interval, "15m")
+
+    # جلب سعر البيتكوين والذهب الفوري (Spot/MT5) مباشرة عبر Binance API
+    if symbol_key in ["البيتكوين", "الذهب"]:
+        bin_symbol = "BTCUSDT" if symbol_key == "البيتكوين" else "PAXGUSDT"
         try:
-            interval_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}
-            bin_tf = interval_map.get(interval, "15m")
-            url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={bin_tf}&limit=50"
+            url = f"https://api.binance.com/api/v3/klines?symbol={bin_symbol}&interval={bin_tf}&limit=50"
             res = session.get(url, timeout=7)
             if res.status_code == 200:
                 data = res.json()
@@ -88,8 +88,9 @@ def fetch_klines(symbol_key, interval="15min"):
                 df = df[['Open', 'High', 'Low', 'Close']].astype(float)
                 return df.reset_index(drop=True)
         except Exception as e:
-            print(f"BTC Fetch Error: {e}")
+            print(f"{symbol_key} Fetch Error: {e}")
 
+    # جلب اليورو من Yahoo Finance
     tf_map = {
         "15min": ("15m", "2d"), 
         "30min": ("30m", "5d"), 
@@ -98,10 +99,9 @@ def fetch_klines(symbol_key, interval="15min"):
         "1day": ("1d", "3mo")
     }
     tf, period = tf_map.get(interval, ("15m", "2d"))
-    ticker = "GC=F" if symbol_key == "الذهب" else "EURUSD=X"
 
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={period}&interval={tf}"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?range={period}&interval={tf}"
         res = session.get(url, timeout=7)
         if res.status_code == 200:
             data = res.json()
@@ -114,21 +114,14 @@ def fetch_klines(symbol_key, interval="15min"):
                     'Low': quote['low'],
                     'Close': quote['close']
                 }).dropna()
-
                 if not df.empty and len(df) >= 5:
-                    if symbol_key == "الذهب":
-                        df['Open'] += GOLD_OFFSET
-                        df['High'] += GOLD_OFFSET
-                        df['Low'] += GOLD_OFFSET
-                        df['Close'] += GOLD_OFFSET
                     return df.reset_index(drop=True)
     except Exception as e:
-        print(f"Yahoo Fetch Error ({symbol_key}): {e}")
+        print(f"Yahoo Fetch Error (EURUSD): {e}")
 
     return pd.DataFrame()
 
 def get_market_trend(symbol_key):
-    # تقليل عدد الفريمات لتقليل الطلبات وحماية السيرفر من الحظر
     df_1d = fetch_klines(symbol_key, "1day")
     df_4h = fetch_klines(symbol_key, "4hour")
     df_1h = fetch_klines(symbol_key, "1hour")
@@ -169,7 +162,6 @@ def scan_high_winrate_signals(symbol_key):
             fvg_status = f"Bearish FVG 🔴 ({round(df['High'].iloc[i], decimals)} - {round(df['Low'].iloc[i-2], decimals)})"
             break
 
-    # البحث عن مناطق الطلب والعرض الحقيقية فقط
     bullish_ob, bearish_ob = None, None
     for i in range(len(df)-2, 1, -1):
         if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
@@ -181,7 +173,6 @@ def scan_high_winrate_signals(symbol_key):
             bearish_ob = (round(df['Low'].iloc[i], decimals), round(df['High'].iloc[i], decimals))
             break
 
-    # إلغاء المناطق الوهمية في حال عدم رصد مناطق حقيقية
     if not bullish_ob or not bearish_ob:
         return {
             "price": current_price, "signal": "NONE", "setup_type": "",
@@ -197,7 +188,6 @@ def scan_high_winrate_signals(symbol_key):
 
     buffer = 0.0002 if symbol_key == "اليورو" else (0.5 if symbol_key == "الذهب" else 25.0)
 
-    # 1. شرط الشراء: السعر داخل/عند منطقة الطلب + عدم الاصطدام بمنطقة العرض + اتجاه صاعد
     in_demand = (bullish_ob[0] - buffer) <= current_price <= (bullish_ob[1] + buffer)
     near_supply = current_price >= (bearish_ob[0] - buffer)
 
@@ -205,7 +195,6 @@ def scan_high_winrate_signals(symbol_key):
         signal = "BUY"
         setup_type = "إعادة اختبار منطقة طلب 🚀"
 
-    # 2. شرط البيع: السعر داخل/عند منطقة العرض + عدم الاصطدام بمنطقة الطلب + اتجاه هابط
     in_supply = (bearish_ob[0] - buffer) <= current_price <= (bearish_ob[1] + buffer)
     near_demand = current_price <= (bullish_ob[1] + buffer)
 
