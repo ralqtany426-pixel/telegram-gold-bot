@@ -12,7 +12,7 @@ TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("لم يتم العثور على BOT_TOKEN في متغيرات البيئة!")
 
-# تم تعديل فارق السعر لتصبح قراءة الذهب مطابقة لـ MT5 (حاليًا عند 4605$)
+# فارق سعر الذهب لمطابقة منصة MT5
 GOLD_OFFSET = 11.26
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
@@ -61,11 +61,13 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_key, interval="15min"):
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        
-        # 1. جلب البيتكوين مباشر من Binance
-        if symbol_key == "البيتكوين":
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    }
+    
+    # 1. جلب البيتكوين من Binance
+    if symbol_key == "البيتكوين":
+        try:
             interval_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}
             bin_tf = interval_map.get(interval, "15m")
             url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={bin_tf}&limit=50"
@@ -73,55 +75,45 @@ def fetch_klines(symbol_key, interval="15min"):
             if res.status_code == 200:
                 data = res.json()
                 df = pd.DataFrame(data, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'QAV', 'NAT', 'TBBAV', 'TBQAV', 'Ignore'])
-                df = df[['Open', 'High', 'Low', 'Close']].astype(float)
-                return df
+                return df[['Open', 'High', 'Low', 'Close']].astype(float)
+        except Exception as e:
+            print(f"BTC Fetch Error: {e}")
 
-        # 2. جلب أسعار الذهب واليورو
-        symbol_map = {"الذهب": "XAU/USD", "اليورو": "EURUSD=X"}
-        td_symbol = symbol_map.get(symbol_key, "XAU/USD")
-        
-        url = f"https://api.twelvedata.com/time_series?symbol={td_symbol}&interval={interval}&outputsize=50&apikey=demo"
+    # 2. جلب الذهب واليورو بأسعار سريعة ومستقرة بدون توقف
+    tf_map = {
+        "15min": ("15m", "2d"), 
+        "30min": ("30m", "5d"), 
+        "1hour": ("1h", "7d"), 
+        "4hour": ("1h", "1mo"), 
+        "1day": ("1d", "3mo")
+    }
+    tf, period = tf_map.get(interval, ("15m", "2d"))
+    ticker = "GC=F" if symbol_key == "الذهب" else "EURUSD=X"
+
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={period}&interval={tf}"
         res = requests.get(url, headers=headers, timeout=5)
-        
         if res.status_code == 200:
             data = res.json()
-            if "values" in data:
-                df = pd.DataFrame(data["values"])
-                df = df[['open', 'high', 'low', 'close']].astype(float)
-                df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close'}, inplace=True)
-                df = df.iloc[::-1].reset_index(drop=True)
-                
-                # تطابق أسعار الشموع مع منصة MT5
-                if symbol_key == "الذهب":
-                    df['Open'] += GOLD_OFFSET
-                    df['High'] += GOLD_OFFSET
-                    df['Low'] += GOLD_OFFSET
-                    df['Close'] += GOLD_OFFSET
-                return df
-
-        # السيرفر الاحتياطي
-        fallback_symbol = "GC=F" if symbol_key == "الذهب" else "EURUSD=X"
-        fallback_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{fallback_symbol}?range=5d&interval={interval}"
-        res_fb = requests.get(fallback_url, headers=headers, timeout=5)
-        if res_fb.status_code == 200:
-            fb_data = res_fb.json()
-            if fb_data.get('chart', {}).get('result'):
-                quote = fb_data['chart']['result'][0]['indicators']['quote'][0]
+            if data.get('chart', {}).get('result'):
+                result = data['chart']['result'][0]
+                quote = result['indicators']['quote'][0]
                 df = pd.DataFrame({
                     'Open': quote['open'],
                     'High': quote['high'],
                     'Low': quote['low'],
                     'Close': quote['close']
                 }).dropna()
-                if symbol_key == "الذهب":
-                    df['Open'] += GOLD_OFFSET
-                    df['High'] += GOLD_OFFSET
-                    df['Low'] += GOLD_OFFSET
-                    df['Close'] += GOLD_OFFSET
-                return df
 
+                if not df.empty and len(df) >= 5:
+                    if symbol_key == "الذهب":
+                        df['Open'] += GOLD_OFFSET
+                        df['High'] += GOLD_OFFSET
+                        df['Low'] += GOLD_OFFSET
+                        df['Close'] += GOLD_OFFSET
+                    return df.reset_index(drop=True)
     except Exception as e:
-        print(f"Fetch Error ({symbol_key}): {e}")
+        print(f"Yahoo Fetch Error ({symbol_key}): {e}")
 
     return pd.DataFrame()
 
@@ -297,7 +289,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم تعديل السعر ليصبح مطابقتًا بالكامل لسعر MT5 الحالي."
+        f"تم حل مشكلة جلب البيانات وإضافة فارق الأسعار بنجاح."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
