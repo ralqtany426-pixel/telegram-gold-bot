@@ -5,6 +5,7 @@ import telebot
 import threading
 import time
 import pandas as pd
+import yfinance as yf
 from flask import Flask, request
 from telebot import types, apihelper
 
@@ -27,8 +28,7 @@ last_alert_time = {
 
 session = requests.Session()
 session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 })
 
 def get_db_connection():
@@ -73,7 +73,7 @@ def get_alert_users():
 def fetch_klines(symbol_key, interval="15min"):
     interval_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}
     
-    # 1. جلب سعر البيتكوين مباشرة من Binance
+    # 1. جلب البيتكوين حصرياً من Binance
     if symbol_key == "البيتكوين":
         bin_tf = interval_map.get(interval, "15m")
         try:
@@ -86,8 +86,9 @@ def fetch_klines(symbol_key, interval="15min"):
                 return df.reset_index(drop=True)
         except Exception as e:
             print(f"BTC Fetch Error: {e}")
+        return pd.DataFrame()
 
-    # 2. جلب سعر الذهب الفوري من Yahoo Finance (GC=F)
+    # 2. جلب الذهب حصرياً عبر مكتبة yfinance (GC=F) لمنع التداخل
     tf_map = {
         "15min": ("15m", "2d"), 
         "30min": ("30m", "5d"), 
@@ -98,22 +99,11 @@ def fetch_klines(symbol_key, interval="15min"):
     tf, period = tf_map.get(interval, ("15m", "2d"))
 
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range={period}&interval={tf}"
-        res = session.get(url, timeout=7)
-        if res.status_code == 200:
-            data = res.json()
-            if data.get('chart', {}).get('result'):
-                result = data['chart']['result'][0]
-                quote = result['indicators']['quote'][0]
-                df = pd.DataFrame({
-                    'Open': quote['open'],
-                    'High': quote['high'],
-                    'Low': quote['low'],
-                    'Close': quote['close']
-                }).dropna()
-                
-                if not df.empty and len(df) >= 5:
-                    return df.reset_index(drop=True)
+        ticker = yf.Ticker("GC=F")
+        df = ticker.history(period=period, interval=tf)
+        if not df.empty:
+            df = df[['Open', 'High', 'Low', 'Close']].reset_index(drop=True)
+            return df
     except Exception as e:
         print(f"Gold Fetch Error: {e}")
 
@@ -301,7 +291,7 @@ def start_command(message):
     welcome_text = (
         f"👑 **ماسح التنبيهات المؤسسي VIP**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"تم إصلاح السيرفر وتصحيح مصادر بيانات الذهب والبيتكوين."
+        f"تم إفصال جلب بيانات الذهب عن البيتكوين بشكل كامل."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=markup)
 
