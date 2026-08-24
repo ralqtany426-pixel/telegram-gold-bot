@@ -81,7 +81,7 @@ def fetch_klines(symbol_key, interval="15min"):
         except Exception as e:
             print(f"BTC Fetch Error: {e}")
 
-    # 2. جلب الذهب واليورو بمدد زمنية أكبر لحساب المتوسطات بأمان
+    # 2. جلب الذهب واليورو (تم زيادة المدى المرجعي لضمان اكتمال حركة المتوسطات)
     tf_map = {
         "15min": ("15m", "5d"), 
         "30min": ("30m", "5d"), 
