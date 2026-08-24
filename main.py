@@ -5,7 +5,6 @@ import telebot
 import threading
 import time
 import pandas as pd
-import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
@@ -59,45 +58,58 @@ def get_alert_users():
         return []
 
 def fetch_klines(symbol_key, interval="15min"):
-    tf_map = {
-        "15min": ("15m", "1d"), 
-        "30min": ("30m", "5d"), 
-        "1hour": ("1h", "5d"), 
-        "4hour": ("1h", "1mo"), 
-        "1day": ("1d", "3mo")
-    }
-    tf, period = tf_map.get(interval, ("15m", "1d"))
-
-    # استخدام رموز Yahoo المحدثة مع جلب البيانات المباشرة
-    ticker_map = {
-        "الذهب": ["XAUUSD=X", "GC=F"],
-        "اليورو": ["EURUSD=X"],
-        "البيتكوين": ["BTC-USD"]
-    }
-    
-    tickers = ticker_map.get(symbol_key, ["XAUUSD=X"])
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-
-    for sym in tickers:
-        try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range={period}&interval={tf}"
+    """
+    جلب البيانات اللحظية المطابقة لأسعار MetaTrader 5 والبورصات المباشرة
+    """
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        
+        # 1. جلب البيتكوين مباشر من Binance (مطابق للأسعار العالمية)
+        if symbol_key == "البيتكوين":
+            interval_map = {"15min": "15m", "30min": "30m", "1hour": "1h", "4hour": "4h", "1day": "1d"}
+            bin_tf = interval_map.get(interval, "15m")
+            url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={bin_tf}&limit=50"
             res = requests.get(url, headers=headers, timeout=5)
             if res.status_code == 200:
                 data = res.json()
-                if data.get('chart', {}).get('result'):
-                    result = data['chart']['result'][0]
-                    quote = result['indicators']['quote'][0]
-                    df = pd.DataFrame({
-                        'Open': quote['open'],
-                        'High': quote['high'],
-                        'Low': quote['low'],
-                        'Close': quote['close']
-                    }).dropna()
-                    
-                    if not df.empty and len(df) >= 5:
-                        return df
-        except Exception as e:
-            print(f"Fetch Error ({sym}): {e}")
+                df = pd.DataFrame(data, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'QAV', 'NAT', 'TBBAV', 'TBQAV', 'Ignore'])
+                df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+                return df
+
+        # 2. جلب الذهب واليورو بأسعار MT5 اللحظية (عبر API مباشر بالفوركس)
+        symbol_map = {"الذهب": "XAU/USD", "اليورو": "EUR/USD"}
+        td_symbol = symbol_map.get(symbol_key, "XAU/USD")
+        
+        # استخدام مصدر بيانات Forex مباشر مع دعم مجاني ومباشر
+        url = f"https://api.twelvedata.com/time_series?symbol={td_symbol}&interval={interval}&outputsize=50&apikey=demo"
+        res = requests.get(url, headers=headers, timeout=5)
+        
+        if res.status_code == 200:
+            data = res.json()
+            if "values" in data:
+                df = pd.DataFrame(data["values"])
+                df = df[['open', 'high', 'low', 'close']].astype(float)
+                df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close'}, inplace=True)
+                return df.iloc[::-1].reset_index(drop=True)
+
+        # مصدر احتياطي سريع للفوركس والذهب لمطابقة أسعار MT5
+        fallback_symbol = "XAUUSD" if symbol_key == "الذهب" else "EURUSD"
+        fallback_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{fallback_symbol}=X?range=5d&interval={interval}"
+        res_fb = requests.get(fallback_url, headers=headers, timeout=5)
+        if res_fb.status_code == 200:
+            fb_data = res_fb.json()
+            if fb_data.get('chart', {}).get('result'):
+                quote = fb_data['chart']['result'][0]['indicators']['quote'][0]
+                df = pd.DataFrame({
+                    'Open': quote['open'],
+                    'High': quote['high'],
+                    'Low': quote['low'],
+                    'Close': quote['close']
+                }).dropna()
+                return df
+
+    except Exception as e:
+        print(f"Fetch Error ({symbol_key}): {e}")
 
     return pd.DataFrame()
 
