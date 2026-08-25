@@ -37,9 +37,9 @@ def get_all_users():
 
 init_db()
 
-# --- جلب السعر المباشر للذهب الفوري (Spot Gold) ---
+# --- جلب السعر المباشر للذهب الفوري ---
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 }
 
 def get_live_price():
@@ -69,7 +69,7 @@ def get_live_price():
 
     return None
 
-# --- جلب الشمعات مع معالجة حظر السيرفرات وإعادة المحاولة ---
+# --- جلب الشمعات ---
 def fetch_candles_yf(interval='30m', period='5d'):
     symbols = ["GC=F", "XAUUSD=X"]
     for sym in symbols:
@@ -77,7 +77,7 @@ def fetch_candles_yf(interval='30m', period='5d'):
             try:
                 ticker = yf.Ticker(sym)
                 df = ticker.history(period=period, interval=interval)
-                if not df.empty and len(df) >= 5:
+                if not df.empty and len(df) >= 10:
                     df = df[['Open', 'High', 'Low', 'Close']].astype(float)
                     return df
             except Exception as e:
@@ -86,25 +86,23 @@ def fetch_candles_yf(interval='30m', period='5d'):
 
     return pd.DataFrame()
 
-# --- خوارزمية تحليل هيكل السوق (التركيز على آخر 12 شمعة للدقة) ---
+# --- خوارزمية تحليل هيكل السوق الحقيقية ---
 def analyze_timeframe(df, current_price=0):
     if df.empty or len(df) < 5 or current_price == 0:
-        d_low, d_high = round(current_price - 4.5, 1), round(current_price - 2.0, 1)
-        s_low, s_high = round(current_price + 2.0, 1), round(current_price + 4.5, 1)
         return {
             "trend": "NEUTRAL ⚪", 
-            "demand": f"🟢 Demand ({d_low} - {d_high})", 
-            "supply": f"🔴 Supply ({s_low} - {s_high})", 
-            "demand_low": d_low, "demand_high": d_high, 
-            "supply_low": s_low, "supply_high": s_high,
-            "fvg": "منطقة متوازنة ⚪", "high": round(current_price + 5, 2), "low": round(current_price - 5, 2)
+            "demand": "غير محددة ⚪", "supply": "غير محددة ⚪", 
+            "demand_low": 0, "demand_high": 0, 
+            "supply_low": 0, "supply_high": 0,
+            "fvg": "لا توجد ⚪", "high": current_price, "low": current_price,
+            "is_sweep": False
         }
 
-    # التركيز على آخر 12 شمعة لمنع أخذ مستويات بعيدة جداً
-    recent_df = df.tail(12)
+    # زيادة النطاق لـ 40 شمعة لرصد الأوردر بلوك الحقيقي والسيولة
+    recent_df = df.tail(40).copy()
     current = current_price if current_price > 0 else recent_df['Close'].iloc[-1]
 
-    ema = recent_df['Close'].ewm(span=10, adjust=False).mean().iloc[-1]
+    ema = recent_df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
     last_close = recent_df['Close'].iloc[-1]
     prev_close = recent_df['Close'].iloc[-2]
 
@@ -118,29 +116,46 @@ def analyze_timeframe(df, current_price=0):
     d_low, d_high = 0, 0
     s_low, s_high = 0, 0
 
-    # أوردر بلوك شرائي
-    for i in range(len(recent_df)-2, 0, -1):
+    # البحث عن Order Block شرائي حقيقي
+    for i in range(len(recent_df)-2, 1, -1):
         if recent_df['Close'].iloc[i] < recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] > recent_df['High'].iloc[i]:
-            candidate_low = round(recent_df['Low'].iloc[i], 1)
-            candidate_high = round(recent_df['High'].iloc[i], 1)
-            if candidate_high <= current + 2.0 and candidate_low >= current - 20.0:
-                d_low, d_high = candidate_low, candidate_high
+            c_low = round(recent_df['Low'].iloc[i], 1)
+            c_high = round(recent_df['High'].iloc[i], 1)
+            if c_high <= current + 5.0 and c_low < current:
+                d_low, d_high = c_low, c_high
                 break
 
-    # أوردر بلوك بيعي
-    for i in range(len(recent_df)-2, 0, -1):
+    # البحث عن Order Block بيعي حقيقي
+    for i in range(len(recent_df)-2, 1, -1):
         if recent_df['Close'].iloc[i] > recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] < recent_df['Low'].iloc[i]:
-            candidate_low = round(recent_df['Low'].iloc[i], 1)
-            candidate_high = round(recent_df['High'].iloc[i], 1)
-            if candidate_low >= current - 2.0 and candidate_high <= current + 20.0:
-                s_low, s_high = candidate_low, candidate_high
+            c_low = round(recent_df['Low'].iloc[i], 1)
+            c_high = round(recent_df['High'].iloc[i], 1)
+            if c_low >= current - 5.0 and c_high > current:
+                s_low, s_high = c_low, c_high
                 break
 
-    if d_low == 0 or d_high == 0:
-        d_low, d_high = round(current - 5.0, 1), round(current - 2.5, 1)
-    if s_low == 0 or s_high == 0:
-        s_low, s_high = round(current + 2.5, 1), round(current + 5.0, 1)
+    # إذا لم يجد أوردر بلوك، الاعتماد على الدعم والمقاومة الحقيقية للشمعات السابقة وليس معادلات وهمية
+    if d_low == 0:
+        s_lows = recent_df['Low'].tail(15)
+        valid_lows = s_lows[s_lows < current]
+        if not valid_lows.empty:
+            d_low = round(valid_lows.min(), 1)
+            d_high = round(d_low + 2.5, 1)
 
+    if s_low == 0:
+        s_highs = recent_df['High'].tail(15)
+        valid_highs = s_highs[s_highs > current]
+        if not valid_highs.empty:
+            s_high = round(valid_highs.max(), 1)
+            s_low = round(s_high - 2.5, 1)
+
+    # اكتشاف صيد السيولة (Liquidity Sweep)
+    lowest_recent = recent_df['Low'].tail(10).min()
+    is_sweep = False
+    if current > lowest_recent and recent_df['Low'].iloc[-1] <= lowest_recent:
+        is_sweep = True
+
+    # FVG
     fvg = "لا توجد ⚪"
     for i in range(len(recent_df)-1, 2, -1):
         if recent_df['High'].iloc[i-2] < recent_df['Low'].iloc[i]:
@@ -150,17 +165,22 @@ def analyze_timeframe(df, current_price=0):
             fvg = f"Bearish FVG 🔴 ({round(recent_df['High'].iloc[i], 1)} - {round(recent_df['Low'].iloc[i-2], 1)})"
             break
 
+    demand_str = f"🟢 Demand ({d_low} - {d_high})" if d_low > 0 else "غير محددة ⚪"
+    supply_str = f"🔴 Supply ({s_low} - {s_high})" if s_low > 0 else "غير محددة ⚪"
+
     return {
         "trend": trend, 
-        "demand": f"🟢 Demand ({d_low} - {d_high})", 
-        "supply": f"🔴 Supply ({s_low} - {s_high})", 
+        "demand": demand_str, 
+        "supply": supply_str, 
         "demand_low": d_low, "demand_high": d_high, 
         "supply_low": s_low, "supply_high": s_high,
         "fvg": fvg, 
         "high": round(recent_df['High'].max(), 2), 
-        "low": round(recent_df['Low'].min(), 2)
+        "low": round(recent_df['Low'].min(), 2),
+        "is_sweep": is_sweep
     }
 
+# --- الفحص متعدد الفريمات المعدل (تم تصحيح جلب وتجميع فريم 4 ساعات) ---
 def scan_multi_timeframe_smc():
     price = get_live_price()
     if price is None:
@@ -169,7 +189,19 @@ def scan_multi_timeframe_smc():
     df_15m = fetch_candles_yf('15m', '2d')
     df_30m = fetch_candles_yf('30m', '3d')
     df_1h  = fetch_candles_yf('1h', '5d')
-    df_4h  = fetch_candles_yf('60m', '10d')
+    
+    # جلب وتجميع فريم 4H الحقيقي بدقة من شمعات الساعة
+    df_4h_raw = fetch_candles_yf('1h', '20d')
+    if not df_4h_raw.empty:
+        df_4h = df_4h_raw.resample('4h').agg({
+            'Open': 'first',
+            'High': 'max',
+            'Low': 'min',
+            'Close': 'last'
+        }).dropna()
+    else:
+        df_4h = pd.DataFrame()
+
     df_1d  = fetch_candles_yf('1d', '30d')
 
     tf_15m = analyze_timeframe(df_15m, price)
@@ -201,26 +233,23 @@ def scan_multi_timeframe_smc():
     }
 
 # --- حساب الأهداف بناءً على فريم 30M ---
-def calculate_trade_targets(price, tf30, signal):
-    if "WAIT" in signal:
-        return "WAIT ⏳ (انتظار إشعار مؤكد)", price, price, price, price
-
-    if "BUY" in signal:
-        sl = round(tf30['demand_low'] - 2.0, 2) if tf30['demand_low'] > 0 else round(price - 4.0, 2)
-        risk = abs(price - sl)
+def calculate_trade_targets(price, tf30, signal_type):
+    if "BUY" in signal_type:
+        sl = round(tf30['demand_low'] - 2.5, 2) if tf30['demand_low'] > 0 else round(price - 5.0, 2)
+        risk = abs(price - sl) if abs(price - sl) > 1.0 else 4.0
         tp1 = round(price + (risk * 1.5), 2)
         tp2 = round(price + (risk * 2.5), 2)
         tp3 = round(price + (risk * 3.5), 2)
         return "BUY 🟢", sl, tp1, tp2, tp3
     else:
-        sl = round(tf30['supply_high'] + 2.0, 2) if tf30['supply_high'] > 0 else round(price + 4.0, 2)
-        risk = abs(sl - price)
+        sl = round(tf30['supply_high'] + 2.5, 2) if tf30['supply_high'] > 0 else round(price + 5.0, 2)
+        risk = abs(sl - price) if abs(sl - price) > 1.0 else 4.0
         tp1 = round(price - (risk * 1.5), 2)
         tp2 = round(price - (risk * 2.5), 2)
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- منبه الصفقات المضمونة على 30M ---
+# --- منبه الصفقات المطور ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
@@ -232,23 +261,25 @@ def auto_alert_loop():
                     p = res['price']
                     tf30 = res['30m']
 
-                    is_high_winrate = False
+                    is_alert = False
                     alert_type = ""
                     signal_type = "WAIT"
 
-                    if tf30['demand_low'] > 0 and (tf30['demand_low'] - 1.0) <= p <= (tf30['demand_high'] + 1.5):
-                        is_high_winrate = True
-                        alert_type = "🔥 **صفقة شراء VIP (ملامسة منطقة الطلب 30M)**"
+                    # شرط شراء مرن (ملامسة الطلب أو كسر كاذب Liquidity Sweep)
+                    if (tf30['demand_low'] > 0 and (tf30['demand_low'] - 3.0) <= p <= (tf30['demand_high'] + 2.0)) or tf30['is_sweep']:
+                        is_alert = True
+                        alert_type = "🔥 **صفقة شراء VIP (منطقة طلب / صيد سيولة 30M)**"
                         signal_type = "BUY"
 
-                    elif tf30['supply_high'] > 0 and (tf30['supply_low'] - 1.5) <= p <= (tf30['supply_high'] + 1.0):
-                        is_high_winrate = True
+                    # شرط بيع مرن
+                    elif tf30['supply_high'] > 0 and (tf30['supply_low'] - 2.0) <= p <= (tf30['supply_high'] + 3.0):
+                        is_alert = True
                         alert_type = "🔥 **صفقة بيع VIP (ملامسة منطقة العرض 30M)**"
                         signal_type = "SELL"
 
-                    current_key = f"{signal_type}_{round(p, 1)}"
+                    current_key = f"{signal_type}_{round(p, 0)}"
 
-                    if is_high_winrate and current_key != last_alert_key:
+                    if is_alert and current_key != last_alert_key:
                         last_alert_key = current_key
                         trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, signal_type)
 
@@ -271,7 +302,7 @@ def auto_alert_loop():
         except Exception as e:
             print(f"Error in alert loop: {e}")
 
-        time.sleep(30)
+        time.sleep(20)
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
@@ -287,7 +318,7 @@ def start_cmd(message):
     btn_alerts = types.KeyboardButton("🔔 حالة التنبيهات")
     markup.add(btn_live, btn_vip, btn_sr, btn_gold, btn_alerts)
 
-    bot.send_message(message.chat.id, "مرحباً بك! تم تحديث البوت ويعمل الآن بفرز دقيق على فريم 30M ⚡", reply_markup=markup)
+    bot.send_message(message.chat.id, "مرحباً بك! تم تحديث البوت ومعالجة منطق مناطق الطلب والسيولة بنجاح ⚡", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
@@ -306,7 +337,13 @@ def send_vip_trade(message):
 
     p = res['price']
     tf30 = res['30m']
-    trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, res['signal'])
+    
+    if tf30['demand_low'] > 0 and p <= tf30['demand_high'] + 2.0:
+        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, "BUY")
+    elif tf30['supply_high'] > 0 and p >= tf30['supply_low'] - 2.0:
+        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, "SELL")
+    else:
+        trade_type = "WAIT"
 
     if "WAIT" in trade_type:
         msg = (
@@ -314,7 +351,7 @@ def send_vip_trade(message):
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"🎯 **حالة السوق:** `انتظار ⏳`\n"
             f"📍 **السعر اللحظي:** `{p}` $\n\n"
-            f"💡 **الملاحظة:** السوق حالياً في حالة تذبذب/عرضية. انتظر ملامسة منطقة طلب أو عرض واضحة ليتم إرسال التنبيه التلقائي.\n"
+            f"💡 **الملاحظة:** انتظر ملامسة منطقة طلب أو عرض حقيقية ليتم إرسال التنبيه التلقائي.\n"
             f"🧭 **الاتجاه العام:** `{res['market_direction']}`\n"
             f"━━━━━━━━━━━━━━━━━━━━━"
         )
@@ -342,7 +379,6 @@ def send_support_resistance(message):
             recent_highs = df_1h['High'].tail(24)
             recent_lows = df_1h['Low'].tail(24)
 
-            # فلترة نضمن بها أن تكون المقاومة أعلى من السعر اللحظي والدعم أقل منه
             r1_candidates = recent_highs[recent_highs > p]
             s1_candidates = recent_lows[recent_lows < p]
 
@@ -397,9 +433,9 @@ def send_alert_status(message):
     msg = (
         "🔔 **نظام التنبيهات التلقائي (SMC VIP):**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ **الحالة:** مُفعل ويعمل في الخلفية.\n"
-        "⏱️ **معدل الفحص:** كل 30 ثانية تلقائياً.\n"
-        "🎯 **الهدف:** إرسال إشعار فوري عند ملامسة السعر لأوردر بلوك قوي (Demand/Supply) على فريم 30M."
+        "✅ **الحالة:** مُفعل بعد التحديث المطور.\n"
+        "⏱️ **معدل الفحص:** كل 20 ثانية.\n"
+        "🎯 **الهدف:** رصد ملامسة مناطق الطلب الحقيقية واقتناص السيولة (Liquidity Sweeps)."
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
