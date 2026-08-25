@@ -2,6 +2,7 @@ import os
 import time
 import sqlite3
 import threading
+import requests
 import telebot
 import pandas as pd
 import yfinance as yf
@@ -36,35 +37,39 @@ def get_all_users():
 
 init_db()
 
-# --- جلب السعر المباشر والشمعات للذهب (Spot Gold) ---
+# --- جلب السعر المباشر والشمعات للذهب الفوري فقط (Spot Gold - XAUUSD) ---
 def get_live_price():
-    symbols = ["XAUUSD=X", "GC=F"]
-    for sym in symbols:
-        try:
-            ticker = yf.Ticker(sym)
-            df = ticker.history(period="1d", interval="1m")
-            if not df.empty:
-                price = df['Close'].iloc[-1]
-                if sym == "GC=F" and price > 4700:
-                    price -= 48.0 
-                return round(price, 2)
-        except Exception as e:
-            print(f"Error fetching live price: {e}")
+    # المصدر الأول: API مباشر للذهب الفوري (Spot Gold)
+    try:
+        url = "https://api.exchangerate-api.com/v4/latest/XAU"
+        response = requests.get(url, timeout=3).json()
+        if 'rates' in response and 'USD' in response['rates']:
+            price_usd = 1 / response['rates']['USD']
+            return round(price_usd, 2)
+    except Exception as e:
+        print(f"Error fetching API price: {e}")
+
+    # المصدر الثاني: yfinance الرمز الفوري حصراً
+    try:
+        ticker = yf.Ticker("XAUUSD=X")
+        df = ticker.history(period="1d", interval="1m")
+        if not df.empty:
+            return round(df['Close'].iloc[-1], 2)
+    except Exception as e:
+        print(f"Error fetching yfinance spot price: {e}")
+
     return None
 
 def fetch_candles_yf(interval='30m', period='5d'):
-    symbols = ["XAUUSD=X", "GC=F"]
-    for sym in symbols:
-        try:
-            ticker = yf.Ticker(sym)
-            df = ticker.history(period=period, interval=interval)
-            if not df.empty and len(df) >= 5:
-                df = df[['Open', 'High', 'Low', 'Close']].astype(float)
-                if sym == "GC=F" and df['Close'].iloc[-1] > 4700:
-                    df = df - 48.0
-                return df
-        except Exception as e:
-            print(f"Error fetching candles: {e}")
+    try:
+        ticker = yf.Ticker("XAUUSD=X")
+        df = ticker.history(period=period, interval=interval)
+        if not df.empty and len(df) >= 5:
+            df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+            return df
+    except Exception as e:
+        print(f"Error fetching candles: {e}")
+
     return pd.DataFrame()
 
 # --- خوارزمية تحليل هيكل السوق والأوردر بلوك (SMC Mechanics) ---
@@ -205,7 +210,7 @@ def auto_alert_loop():
                     trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf15, res['signal'])
 
                     alert_msg = (
-                        f"🚨 **تنبيه صفقة VIP معتمدة (SMC Pro)!**\n"
+                        f"🚨 **تنبيه صفقة VIP معتمدة (Spot Gold)!**\n"
                         f"━━━━━━━━━━━━━━━━━━━━━\n"
                         f"{alert_type}\n\n"
                         f"📍 **سعر الدخول:** `{p}` $\n"
@@ -225,7 +230,7 @@ def auto_alert_loop():
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
-# --- واجهة المستخدم والواجهات المتقدمة ---
+# --- واجهة المستخدم ---
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     add_user(message.chat.id)
@@ -236,7 +241,7 @@ def start_cmd(message):
     btn_gold = types.KeyboardButton("تحليل الذهب 🥇")
     markup.add(btn_live, btn_vip, btn_sr, btn_gold)
     
-    bot.send_message(message.chat.id, "مرحباً بك! تم تحديث النظام بإضافة 3 أهداف ووقف خسارة محدد 🔔", reply_markup=markup)
+    bot.send_message(message.chat.id, "مرحباً بك! البوت الآن يعمل على سعر الذهب السبوت المباشر (Spot Gold) فقط 🔔", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
@@ -279,7 +284,7 @@ def send_support_resistance(message):
         r1 = round(df_1h['High'].tail(24).max(), 2)
         s1 = round(df_1h['Low'].tail(24).min(), 2)
         msg = (
-            f"📊 **مستويات الدعم والمقاومة (XAU/USD):**\n"
+            f"📊 **مستويات الدعم والمقاومة (Spot Gold):**\n"
             f"📍 **السعر الحالي:** `{p}` $\n"
             f"🔴 **المقاومة (R1):** `{r1}` $\n"
             f"🟢 **الدعم (S1):** `{s1}` $"
@@ -292,7 +297,7 @@ def handle_gold_analysis(message):
     res = scan_multi_timeframe_smc()
     if res:
         msg = (
-            f"📊 **تقرير هيكل السوق المتعدد (15M - 1D SMC Pro):**\n"
+            f"📊 **تقرير هيكل السوق (Spot Gold SMC Pro):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📍 **السعر اللحظي (MT5):** `{res['price']}` $\n"
             f"🧭 **اتجاه السوق الشامل:** `{res['market_direction']}`\n"
