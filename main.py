@@ -71,13 +71,13 @@ def get_live_price():
 
 # --- جلب الشمعات مع معالجة حظر السيرفرات وإعادة المحاولة ---
 def fetch_candles_yf(interval='30m', period='5d'):
-    symbols = ["XAUUSD=X", "GC=F"]
+    symbols = ["GC=F", "XAUUSD=X"]
     for sym in symbols:
         for attempt in range(2):  
             try:
                 ticker = yf.Ticker(sym)
                 df = ticker.history(period=period, interval=interval)
-                if not df.empty and len(df) >= 3:
+                if not df.empty and len(df) >= 5:
                     df = df[['Open', 'High', 'Low', 'Close']].astype(float)
                     return df
             except Exception as e:
@@ -86,59 +86,81 @@ def fetch_candles_yf(interval='30m', period='5d'):
 
     return pd.DataFrame()
 
-# --- خوارزمية تحليل هيكل السوق ---
+# --- خوارزمية تحليل هيكل السوق المعدلة ---
 def analyze_timeframe(df, current_price=0):
-    if df.empty or len(df) < 3:
-        if current_price > 0:
-            d_low, d_high = round(current_price - 6.0, 1), round(current_price - 3.5, 1)
-            s_low, s_high = round(current_price + 3.5, 1), round(current_price + 6.0, 1)
-            return {
-                "trend": "NEUTRAL ⚪", 
-                "demand": f"🟢 Demand ({d_low} - {d_high})", 
-                "supply": f"🔴 Supply ({s_low} - {s_high})", 
-                "demand_low": d_low, "demand_high": d_high, 
-                "supply_low": s_low, "supply_high": s_high,
-                "fvg": "منطقة متوازنة ⚪", "high": round(current_price + 10, 2), "low": round(current_price - 10, 2)
-            }
+    if df.empty or len(df) < 5 or current_price == 0:
+        d_low, d_high = round(current_price - 4.5, 1), round(current_price - 2.0, 1)
+        s_low, s_high = round(current_price + 2.0, 1), round(current_price + 4.5, 1)
         return {
-            "trend": "غير محدد ⚪", "demand": "غير محدد", "supply": "غير محدد", 
-            "demand_low": 0, "demand_high": 0, "supply_low": 0, "supply_high": 0,
-            "fvg": "لا توجد ⚪", "high": 0, "low": 0
+            "trend": "NEUTRAL ⚪", 
+            "demand": f"🟢 Demand ({d_low} - {d_high})", 
+            "supply": f"🔴 Supply ({s_low} - {s_high})", 
+            "demand_low": d_low, "demand_high": d_high, 
+            "supply_low": s_low, "supply_high": s_high,
+            "fvg": "منطقة متوازنة ⚪", "high": round(current_price + 5, 2), "low": round(current_price - 5, 2)
         }
 
-    current = df['Close'].iloc[-1]
-    ema = df['Close'].ewm(span=min(len(df), 20), adjust=False).mean().iloc[-1]
-    trend = "BULLISH 🟢" if current >= ema else "BEARISH 🔴"
+    # التركيز على آخر 20 شمعة فقط لمنع أخذ مستويات قديمة بعيدة عن السعر
+    recent_df = df.tail(20)
+    current = current_price if current_price > 0 else recent_df['Close'].iloc[-1]
+    
+    # تحديد الاتجاه بناءً على الشموع الأخيرة والـ EMA
+    ema = recent_df['Close'].ewm(span=10, adjust=False).mean().iloc[-1]
+    last_close = recent_df['Close'].iloc[-1]
+    prev_close = recent_df['Close'].iloc[-2]
 
-    high_val = round(df['High'].max(), 2)
-    low_val = round(df['Low'].min(), 2)
+    if current >= ema and last_close >= prev_close:
+        trend = "BULLISH 🟢"
+    elif current < ema and last_close < prev_close:
+        trend = "BEARISH 🔴"
+    else:
+        trend = "NEUTRAL ⚪"
 
-    d_low, d_high = low_val, round(low_val + 2.5, 2)
-    s_low, s_high = round(high_val - 2.5, 2), high_val
+    d_low, d_high = 0, 0
+    s_low, s_high = 0, 0
 
-    for i in range(len(df)-2, 0, -1):
-        if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
-            d_low, d_high = round(df['Low'].iloc[i], 1), round(df['High'].iloc[i], 1)
-            break
+    # البحث عن أوردر بلوك شرائي قادم وقريب من السعر
+    for i in range(len(recent_df)-2, 0, -1):
+        if recent_df['Close'].iloc[i] < recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] > recent_df['High'].iloc[i]:
+            candidate_low = round(recent_df['Low'].iloc[i], 1)
+            candidate_high = round(recent_df['High'].iloc[i], 1)
+            if candidate_high <= current + 2.0 and candidate_low >= current - 25.0:
+                d_low, d_high = candidate_low, candidate_high
+                break
 
-    for i in range(len(df)-2, 0, -1):
-        if df['Close'].iloc[i] > df['Open'].iloc[i] and df['Close'].iloc[i+1] < df['Low'].iloc[i]:
-            s_low, s_high = round(df['Low'].iloc[i], 1), round(df['High'].iloc[i], 1)
-            break
+    # البحث عن أوردر بلوك بيعي قادم وقريب من السعر
+    for i in range(len(recent_df)-2, 0, -1):
+        if recent_df['Close'].iloc[i] > recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] < recent_df['Low'].iloc[i]:
+            candidate_low = round(recent_df['Low'].iloc[i], 1)
+            candidate_high = round(recent_df['High'].iloc[i], 1)
+            if candidate_low >= current - 2.0 and candidate_high <= current + 25.0:
+                s_low, s_high = candidate_low, candidate_high
+                break
+
+    # تعيين مستويات افتراضية منطقية قريبة في حال عدم وجود أوردر بلوك واضح
+    if d_low == 0 or d_high == 0:
+        d_low, d_high = round(current - 5.0, 1), round(current - 2.5, 1)
+    if s_low == 0 or s_high == 0:
+        s_low, s_high = round(current + 2.5, 1), round(current + 5.0, 1)
 
     fvg = "لا توجد ⚪"
-    for i in range(len(df)-1, 2, -1):
-        if df['High'].iloc[i-2] < df['Low'].iloc[i]:
-            fvg = f"Bullish FVG 🟢 ({round(df['High'].iloc[i-2], 1)} - {round(df['Low'].iloc[i], 1)})"
+    for i in range(len(recent_df)-1, 2, -1):
+        if recent_df['High'].iloc[i-2] < recent_df['Low'].iloc[i]:
+            fvg = f"Bullish FVG 🟢 ({round(recent_df['High'].iloc[i-2], 1)} - {round(recent_df['Low'].iloc[i], 1)})"
             break
-        elif df['Low'].iloc[i-2] > df['High'].iloc[i]:
-            fvg = f"Bearish FVG 🔴 ({round(df['High'].iloc[i], 1)} - {round(df['Low'].iloc[i-2], 1)})"
+        elif recent_df['Low'].iloc[i-2] > recent_df['High'].iloc[i]:
+            fvg = f"Bearish FVG 🔴 ({round(recent_df['High'].iloc[i], 1)} - {round(recent_df['Low'].iloc[i-2], 1)})"
             break
 
     return {
-        "trend": trend, "demand": f"🟢 Demand ({d_low} - {d_high})", "supply": f"🔴 Supply ({s_low} - {s_high})", 
-        "demand_low": d_low, "demand_high": d_high, "supply_low": s_low, "supply_high": s_high,
-        "fvg": fvg, "high": high_val, "low": low_val
+        "trend": trend, 
+        "demand": f"🟢 Demand ({d_low} - {d_high})", 
+        "supply": f"🔴 Supply ({s_low} - {s_high})", 
+        "demand_low": d_low, "demand_high": d_high, 
+        "supply_low": s_low, "supply_high": s_high,
+        "fvg": fvg, 
+        "high": round(recent_df['High'].max(), 2), 
+        "low": round(recent_df['Low'].min(), 2)
     }
 
 def scan_multi_timeframe_smc():
@@ -146,10 +168,10 @@ def scan_multi_timeframe_smc():
     if price is None:
         return None
 
-    df_15m = fetch_candles_yf('15m', '3d')
-    df_30m = fetch_candles_yf('30m', '5d')
-    df_1h  = fetch_candles_yf('1h', '7d')
-    df_4h  = fetch_candles_yf('60m', '14d')
+    df_15m = fetch_candles_yf('15m', '2d')
+    df_30m = fetch_candles_yf('30m', '3d')
+    df_1h  = fetch_candles_yf('1h', '5d')
+    df_4h  = fetch_candles_yf('60m', '10d')
     df_1d  = fetch_candles_yf('1d', '30d')
 
     tf_15m = analyze_timeframe(df_15m, price)
@@ -160,11 +182,9 @@ def scan_multi_timeframe_smc():
 
     timeframes = [tf_15m, tf_30m, tf_1h, tf_4h, tf_1d]
 
-    # حساب الاتجاهات الفعلية بشكل صريح
     bull_count = sum(1 for tf in timeframes if "BULLISH" in tf['trend'])
     bear_count = sum(1 for tf in timeframes if "BEARISH" in tf['trend'])
 
-    # إصلاح منطق إشارة الحسم لمنع التناقض عند وجود قيم NEUTRAL
     if bull_count >= 3:
         market_direction = "صاعد قوي 🟢🚀"
         signal = "BUY Strong 🚀 (توافق صاعد)"
@@ -185,21 +205,21 @@ def scan_multi_timeframe_smc():
 # --- حساب الأهداف وقف الخسارة ---
 def calculate_trade_targets(price, tf15, signal):
     if "BUY" in signal:
-        sl = round(tf15['demand_low'] - 2.5, 2) if tf15['demand_low'] > 0 else round(price - 5.0, 2)
+        sl = round(tf15['demand_low'] - 2.0, 2) if tf15['demand_low'] > 0 else round(price - 4.0, 2)
         risk = abs(price - sl)
         tp1 = round(price + (risk * 1.5), 2)
         tp2 = round(price + (risk * 2.5), 2)
         tp3 = round(price + (risk * 3.5), 2)
         return "BUY 🟢", sl, tp1, tp2, tp3
     else:
-        sl = round(tf15['supply_high'] + 2.5, 2) if tf15['supply_high'] > 0 else round(price + 5.0, 2)
+        sl = round(tf15['supply_high'] + 2.0, 2) if tf15['supply_high'] > 0 else round(price + 4.0, 2)
         risk = abs(sl - price)
         tp1 = round(price - (risk * 1.5), 2)
         tp2 = round(price - (risk * 2.5), 2)
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- منبه الصفقات المضمونة SMC (معدل لإرسال التنبيهات فور ملامسة الأوردر بلوك) ---
+# --- منبه الصفقات المضمونة SMC ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
@@ -215,14 +235,12 @@ def auto_alert_loop():
                     alert_type = ""
                     signal_type = "WAIT"
 
-                    # 1. فحص ملامسة منطقة الطلب / الأوردر بلوك الشرائي (تم توسيع الهامش لـ 3.0$)
-                    if tf15['demand_low'] > 0 and (tf15['demand_low'] - 1.0) <= p <= (tf15['demand_high'] + 3.0):
+                    if tf15['demand_low'] > 0 and (tf15['demand_low'] - 1.0) <= p <= (tf15['demand_high'] + 1.5):
                         is_high_winrate = True
                         alert_type = "🔥 **صفقة شراء VIP (ملامسة منطقة الطلب 15M)**"
                         signal_type = "BUY"
 
-                    # 2. فحص ملامسة منطقة العرض / الأوردر بلوك البيعي (تم توسيع الهامش لـ 3.0$)
-                    elif tf15['supply_high'] > 0 and (tf15['supply_low'] - 3.0) <= p <= (tf15['supply_high'] + 1.0):
+                    elif tf15['supply_high'] > 0 and (tf15['supply_low'] - 1.5) <= p <= (tf15['supply_high'] + 1.0):
                         is_high_winrate = True
                         alert_type = "🔥 **صفقة بيع VIP (ملامسة منطقة العرض 15M)**"
                         signal_type = "SELL"
@@ -252,7 +270,7 @@ def auto_alert_loop():
         except Exception as e:
             print(f"Error in alert loop: {e}")
 
-        time.sleep(30) # فحص مستمر كل 30 ثانية لعدم تفويت الحركة
+        time.sleep(30)
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
