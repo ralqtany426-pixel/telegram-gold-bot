@@ -60,7 +60,7 @@ def get_live_price():
         print(f"API ExchangeRate Error: {e}")
 
     try:
-        ticker = yf.Ticker("XAUUSD=X")
+        ticker = yf.Ticker("GC=F")
         df = ticker.history(period="1d", interval="1m")
         if not df.empty:
             return round(float(df['Close'].iloc[-1]), 2)
@@ -71,16 +71,18 @@ def get_live_price():
 
 # --- جلب الشمعات مع معالجة حظر السيرفرات وإعادة المحاولة ---
 def fetch_candles_yf(interval='30m', period='5d'):
-    for attempt in range(3):  
-        try:
-            ticker = yf.Ticker("XAUUSD=X")
-            df = ticker.history(period=period, interval=interval)
-            if not df.empty and len(df) >= 3:
-                df = df[['Open', 'High', 'Low', 'Close']].astype(float)
-                return df
-        except Exception as e:
-            print(f"Attempt {attempt+1} failed for interval {interval}: {e}")
-            time.sleep(1)
+    symbols = ["XAUUSD=X", "GC=F"]
+    for sym in symbols:
+        for attempt in range(2):  
+            try:
+                ticker = yf.Ticker(sym)
+                df = ticker.history(period=period, interval=interval)
+                if not df.empty and len(df) >= 3:
+                    df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+                    return df
+            except Exception as e:
+                print(f"Attempt {attempt+1} failed for {sym} interval {interval}: {e}")
+                time.sleep(0.5)
 
     return pd.DataFrame()
 
@@ -213,14 +215,14 @@ def auto_alert_loop():
                     alert_type = ""
                     signal_type = "WAIT"
 
-                    # 1. فحص ملامسة منطقة الطلب / الأوردر بلوك الشرائي
-                    if tf15['demand_low'] > 0 and tf15['demand_low'] <= p <= (tf15['demand_high'] + 1.5):
+                    # 1. فحص ملامسة منطقة الطلب / الأوردر بلوك الشرائي (تم توسيع الهامش لـ 3.0$)
+                    if tf15['demand_low'] > 0 and (tf15['demand_low'] - 1.0) <= p <= (tf15['demand_high'] + 3.0):
                         is_high_winrate = True
                         alert_type = "🔥 **صفقة شراء VIP (ملامسة منطقة الطلب 15M)**"
                         signal_type = "BUY"
 
-                    # 2. فحص ملامسة منطقة العرض / الأوردر بلوك البيعي
-                    elif tf15['supply_high'] > 0 and (tf15['supply_low'] - 1.5) <= p <= tf15['supply_high']:
+                    # 2. فحص ملامسة منطقة العرض / الأوردر بلوك البيعي (تم توسيع الهامش لـ 3.0$)
+                    elif tf15['supply_high'] > 0 and (tf15['supply_low'] - 3.0) <= p <= (tf15['supply_high'] + 1.0):
                         is_high_winrate = True
                         alert_type = "🔥 **صفقة بيع VIP (ملامسة منطقة العرض 15M)**"
                         signal_type = "SELL"
@@ -250,7 +252,7 @@ def auto_alert_loop():
         except Exception as e:
             print(f"Error in alert loop: {e}")
 
-        time.sleep(300) # فحص مستمر كل 5 دقائق
+        time.sleep(30) # فحص مستمر كل 30 ثانية لعدم تفويت الحركة
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
@@ -354,7 +356,7 @@ def send_alert_status(message):
         "🔔 **نظام التنبيهات التلقائي (SMC VIP):**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "✅ **الحالة:** مُفعل ويعمل في الخلفية.\n"
-        "⏱️ **معدل الفحص:** كل 5 دقائق تلقائياً.\n"
+        "⏱️ **معدل الفحص:** كل 30 ثانية تلقائياً.\n"
         "🎯 **الهدف:** إرسال إشعار فوري عند ملامسة السعر لأوردر بلوك قوي (Demand/Supply) على فريم 15M."
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
