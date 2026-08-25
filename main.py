@@ -4,7 +4,7 @@ import sqlite3
 import threading
 import telebot
 import pandas as pd
-import MetaTrader5 as mt5
+import yfinance as yf
 from flask import Flask, request
 from telebot import types
 
@@ -14,12 +14,6 @@ if not TOKEN:
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
-
-# --- تهيئة الاتصال بـ MetaTrader 5 ---
-if not mt5.initialize():
-    print("فشل الاتصال بـ MetaTrader 5، يرجى التأكد من فتح المنصة وتفعيل التداول الآلي.")
-
-SYMBOL = "XAUUSD"  # تأكد من تطابق اسم الرمز لدى بروكِرك (مثل GOLD)
 
 # --- قاعدة البيانات ---
 DB_NAME = "users.db"
@@ -42,26 +36,27 @@ def get_all_users():
 
 init_db()
 
-# --- جلب البيانات السعرية ---
-def fetch_candles_mt5(timeframe_str='30m', count=100):
-    tf_map = {
-        '30m': mt5.TIMEFRAME_M30,
-        '1h':  mt5.TIMEFRAME_H1,
-        '4h':  mt5.TIMEFRAME_H4,
-        '1d':  mt5.TIMEFRAME_D1
-    }
-    tf = tf_map.get(timeframe_str, mt5.TIMEFRAME_M30)
-    rates = mt5.copy_rates_from_pos(SYMBOL, tf, 0, count)
-    
-    if rates is None or len(rates) == 0:
-        return pd.DataFrame()
-        
-    df = pd.DataFrame(rates)
-    df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close'}, inplace=True)
-    return df[['Open', 'High', 'Low', 'Close']].astype(float)
+# --- جلب الشمعات والسعر اللحظي عن طريق yfinance ---
+def fetch_candles_yf(interval='30m', period='5d'):
+    try:
+        ticker = yf.Ticker("GC=F") # العقود الآجلة للذهب
+        df = ticker.history(period=period, interval=interval)
+        if not df.empty:
+            df = df[['Open', 'High', 'Low', 'Close']].astype(float)
+            return df
+    except Exception as e:
+        print(f"Error fetching data: {e}")
+    return pd.DataFrame()
 
-def get_live_tick():
-    return mt5.symbol_info_tick(SYMBOL)
+def get_live_price():
+    try:
+        ticker = yf.Ticker("GC=F")
+        df = ticker.history(period="1d", interval="1m")
+        if not df.empty:
+            return round(df['Close'].iloc[-1], 2)
+    except Exception as e:
+        print(f"Error getting live price: {e}")
+    return None
 
 def analyze_timeframe(df):
     if df.empty or len(df) < 5:
@@ -91,29 +86,20 @@ def analyze_timeframe(df):
             s_low, s_high = round(df['Low'].iloc[i], 1), round(df['High'].iloc[i], 1)
             break
 
-    fvg = "لا توجد ⚪"
-    for i in range(len(df)-1, 2, -1):
-        if df['High'].iloc[i-2] < df['Low'].iloc[i]:
-            fvg = f"Bullish FVG 🟢 ({round(df['High'].iloc[i-2], 1)} - {round(df['Low'].iloc[i], 1)})"
-            break
-        elif df['Low'].iloc[i-2] > df['High'].iloc[i]:
-            fvg = f"Bearish FVG 🔴 ({round(df['High'].iloc[i], 1)} - {round(df['Low'].iloc[i-2], 1)})"
-            break
-
     return {
         "trend": trend, "demand": f"🟢 Demand ({d_low} - {d_high})", "supply": f"🔴 Supply ({s_low} - {s_high})", 
         "demand_low": d_low, "demand_high": d_high, "supply_low": s_low, "supply_high": s_high,
-        "fvg": fvg, "high": high_val, "low": low_val
+        "high": high_val, "low": low_val
     }
 
 def scan_multi_timeframe_smc():
-    df_30m = fetch_candles_mt5('30m', 100)
-    df_1h  = fetch_candles_mt5('1h', 100)
-    df_4h  = fetch_candles_mt5('4h', 100)
-    df_1d  = fetch_candles_mt5('1d', 100)
-    tick = get_live_tick()
+    df_30m = fetch_candles_yf('30m', '5d')
+    df_1h  = fetch_candles_yf('1h', '7d')
+    df_4h  = fetch_candles_yf('60m', '14d')
+    df_1d  = fetch_candles_yf('1d', '30d')
+    price  = get_live_price()
 
-    if df_30m.empty or tick is None:
+    if df_30m.empty or price is None:
         return None
 
     tf_30m = analyze_timeframe(df_30m)
@@ -131,15 +117,15 @@ def scan_multi_timeframe_smc():
         signal = "WAIT ⏳ (تضارب الاتجاهات)"
 
     return {
-        "price": round(tick.bid, 2), "30m": tf_30m, "1h": tf_1h, "4h": tf_4h, "1d": tf_1d, "signal": signal
+        "price": price, "30m": tf_30m, "1h": tf_1h, "4h": tf_4h, "1d": tf_1d, "signal": signal
     }
 
-# --- منبه الصفقات الناجحة والتلقائي ---
+# --- المنبه التلقائي للصفقات الناجحة ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
         try:
-            time.sleep(30) # فحص كل 30 ثانية
+            time.sleep(60)
             users = get_all_users()
             if not users:
                 continue
@@ -149,33 +135,30 @@ def auto_alert_loop():
                 p = res['price']
                 tf30 = res['30m']
                 
-                # شرط الصفقة المضمونة القوية (توافق + ملامسة منطقة)
                 is_high_winrate = False
                 alert_type = ""
                 
                 if "BUY Strong" in res['signal'] and tf30['demand_low'] <= p <= (tf30['demand_high'] + 1.0):
                     is_high_winrate = True
-                    alert_type = "🔥 **صفقة شراء VIP عالي النجاح! (ملامسة منطقة طلب + توافق صاعد)**"
+                    alert_type = "🔥 **صفقة شراء VIP عالية النجاح!**"
                 elif "SELL Strong" in res['signal'] and (tf30['supply_low'] - 1.0) <= p <= tf30['supply_high']:
                     is_high_winrate = True
-                    alert_type = "🔥 **صفقة بيع VIP عالي النجاح! (ملامسة منطقة عرض + توافق هابط)**"
+                    alert_type = "🔥 **صفقة بيع VIP عالية النجاح!**"
 
                 current_key = f"{res['signal']}_{is_high_winrate}_{round(p, 1)}"
 
                 if is_high_winrate and current_key != last_alert_key:
                     last_alert_key = current_key
-                    
                     sl = round(tf30['demand_low'] - 3.0, 2) if "شراء" in alert_type else round(tf30['supply_high'] + 3.0, 2)
                     tp = round(tf30['supply_low'], 2) if "شراء" in alert_type else round(tf30['demand_high'], 2)
 
                     alert_msg = (
-                        f"🚨 **تنبيه صفقة ناجحة عالية الدقة!**\n"
+                        f"🚨 **تنبيه صفقة ناجحة معتمدة!**\n"
                         f"━━━━━━━━━━━━━━━━━━━━━\n"
                         f"{alert_type}\n\n"
                         f"📍 **السعر اللحظي:** `{p}` $\n"
-                        f"🎯 **الدخول:** `{p}`\n"
-                        f"🛑 **وقف الخسارة (SL):** `{sl}`\n"
-                        f"🎯 **الهدف (TP):** `{tp}`\n"
+                        f"🛑 **وقف الخسارة (SL):** `{sl}` $\n"
+                        f"🎯 **الهدف (TP):** `{tp}` $\n"
                         f"━━━━━━━━━━━━━━━━━━━━━"
                     )
                     for chat_id in users:
@@ -188,7 +171,7 @@ def auto_alert_loop():
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
-# --- لوحة التحكم والقطع الفنية ---
+# --- واجهة البوت والتنقل ---
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     add_user(message.chat.id)
@@ -199,28 +182,15 @@ def start_cmd(message):
     btn_gold = types.KeyboardButton("تحليل الذهب 🥇")
     markup.add(btn_live, btn_vip, btn_sr, btn_gold)
     
-    bot.send_message(
-        message.chat.id, 
-        "مرحباً بك! تم تفعيل الميزات المتقدمة والمنبه الآلي للصفقات الناجحة 🔔", 
-        reply_markup=markup
-    )
+    bot.send_message(message.chat.id, "مرحباً بك! تم تشغيل البوت بنجاح 🔔", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
-    tick = get_live_tick()
-    if tick:
-        spread = round((tick.ask - tick.bid) * 10, 1)
-        msg = (
-            f"⚡ **السعر المباشر للذهب (MT5):**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔻 **Bid (البيع):** `{tick.bid}` $\n"
-            f"🔺 **Ask (الشراء):** `{tick.ask}` $\n"
-            f"📏 **السبيد (Spread):** `{spread}` pips\n"
-            f"⏰ **الوقت:** `لحظي`"
-        )
-        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+    p = get_live_price()
+    if p:
+        bot.send_message(message.chat.id, f"⚡ **سعر الذهب المباشر:** `{p}` $", parse_mode="Markdown")
     else:
-        bot.send_message(message.chat.id, "⚠️ فشل جلب السعر المباشر من منصة MT5.")
+        bot.send_message(message.chat.id, "⚠️ فشل جلب السعر المباشر.")
 
 @bot.message_handler(func=lambda m: m.text == "🔥 صفقات VIP (الطلب والعرض)")
 def send_vip_trade(message):
@@ -233,94 +203,51 @@ def send_vip_trade(message):
     tf30 = res['30m']
     
     if "BUY" in res['signal']:
-        entry = p
-        sl = round(tf30['demand_low'] - 2.5, 2)
-        tp = round(tf30['supply_low'], 2)
-        trade_type = "BUY 🟢"
+        sl, tp, trade_type = round(tf30['demand_low'] - 2.5, 2), round(tf30['supply_low'], 2), "BUY 🟢"
     else:
-        entry = p
-        sl = round(tf30['supply_high'] + 2.5, 2)
-        tp = round(tf30['demand_high'], 2)
-        trade_type = "SELL 🔴"
-
-    risk = abs(entry - sl)
-    reward = abs(tp - entry)
-    rr = round(reward / risk, 2) if risk > 0 else 0
+        sl, tp, trade_type = round(tf30['supply_high'] + 2.5, 2), round(tf30['demand_high'], 2), "SELL 🔴"
 
     msg = (
-        f"🔥 **توصية VIP بناءً على هيكل SMC:**\n"
+        f"🔥 **توصية VIP (SMC):**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 **نوع الصفقة:** `{trade_type}`\n"
-        f"📍 **نقطة الدخول:** `{entry}` $\n"
-        f"🛑 **وقف الخسارة (SL):** `{sl}` $\n"
-        f"🎯 **هدف أخذ الربح (TP):** `{tp}` $\n"
-        f"⚖️ **نسبة العائد للمخاطرة:** `1:{rr}`\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🧱 **منطقة الطلب القريبة:** `{tf30['demand']}`\n"
-        f"🧱 **منطقة العرض القريبة:** `{tf30['supply']}`"
+        f"📍 **الدخول:** `{p}` $\n"
+        f"🛑 **SL:** `{sl}` $\n"
+        f"🎯 **TP:** `{tp}` $\n"
+        f"━━━━━━━━━━━━━━━━━━━━━"
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "📊 الدعم والمقاومة")
 def send_support_resistance(message):
-    df_1h = fetch_candles_mt5('1h', 100)
-    df_4h = fetch_candles_mt5('4h', 100)
-    tick = get_live_tick()
-
-    if df_1h.empty or tick is None:
-        bot.send_message(message.chat.id, "⚠️ تعذر حساب مستويات الدعم والمقاومة.")
-        return
-
-    price = tick.bid
-    r1 = round(df_1h['High'].tail(24).max(), 2)
-    s1 = round(df_1h['Low'].tail(24).min(), 2)
-    r2 = round(df_4h['High'].tail(50).max(), 2)
-    s2 = round(df_4h['Low'].tail(50).min(), 2)
-
-    msg = (
-        f"📊 **مستويات الدعم والمقاومة الرئيسية (XAU/USD):**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📍 **السعر الحالي:** `{price}` $\n\n"
-        f"🔴 **المقاومة القوية (4H R2):** `{r2}` $\n"
-        f"🔴 **المقاومة اللحظية (1H R1):** `{r1}` $\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🟢 **الدعم اللحظي (1H S1):** `{s1}` $\n"
-        f"🟢 **الدعم القوي (4H S2):** `{s2}` $\n"
-        f"━━━━━━━━━━━━━━━━━━━━━"
-    )
-    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+    df_1h = fetch_candles_yf('1h', '7d')
+    p = get_live_price()
+    if not df_1h.empty and p:
+        r1 = round(df_1h['High'].tail(24).max(), 2)
+        s1 = round(df_1h['Low'].tail(24).min(), 2)
+        msg = (
+            f"📊 **الدعم والمقاومة (XAU/USD):**\n"
+            f"📍 **السعر الحالي:** `{p}` $\n"
+            f"🔴 **المقاومة (R1):** `{r1}` $\n"
+            f"🟢 **الدعم (S1):** `{s1}` $"
+        )
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "تحليل الذهب 🥇")
 def handle_gold_analysis(message):
     add_user(message.chat.id)
-    bot.send_message(message.chat.id, "🔄 **جاري تحليل مناطق الطلب والعرض والتوافق...**")
-    
-    def process():
-        res = scan_multi_timeframe_smc()
-        if res:
-            msg = (
-                f"📊 **التقرير المتقدم لهيكل السوق (XAU/USD - 30M SMC Pro):**\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"📍 **السعر اللحظي (MT5):** `{res['price']}` $\n\n"
-                f"⚡ **إشارة الحسم العامة:** `{res['signal']}`\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔹 **فريم 30 دقيقة (30M):**\n"
-                f"• الاتجاه: `{res['30m']['trend']}`\n"
-                f"• منطقة الطلب: `{res['30m']['demand']}`\n"
-                f"• منطقة العرض: `{res['30m']['supply']}`\n\n"
-                f"🔹 **فريم الساعة (1H):**\n"
-                f"• الاتجاه: `{res['1h']['trend']}`\n\n"
-                f"🔹 **فريم 4 ساعات (4H):**\n"
-                f"• الاتجاه: `{res['4h']['trend']}`\n"
-                f"━━━━━━━━━━━━━━━━━━━━━"
-            )
-            bot.send_message(message.chat.id, msg, parse_mode="Markdown")
-        else:
-            bot.send_message(message.chat.id, "⚠️ متعذر جلب البيانات السعرية اللحظية.")
-            
-    threading.Thread(target=process, daemon=True).start()
+    res = scan_multi_timeframe_smc()
+    if res:
+        msg = (
+            f"📊 **تحليل هيكل السوق (30M SMC Pro):**\n"
+            f"📍 **السعر اللحظي:** `{res['price']}` $\n"
+            f"⚡ **الإشارة:** `{res['signal']}`\n"
+            f"🔹 **الطلب:** `{res['30m']['demand']}`\n"
+            f"🔹 **العرض:** `{res['30m']['supply']}`"
+        )
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-# --- خادم Flask للتشغيل ---
+# --- خادم Webhook لـ Render ---
 @app.route('/')
 def home():
     return "Bot Online", 200
