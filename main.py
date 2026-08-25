@@ -157,7 +157,7 @@ def scan_multi_timeframe_smc():
     tf_1d  = analyze_timeframe(df_1d, price)
 
     timeframes = [tf_15m, tf_30m, tf_1h, tf_4h, tf_1d]
-    
+
     # حساب الاتجاهات الفعلية بشكل صريح
     bull_count = sum(1 for tf in timeframes if "BULLISH" in tf['trend'])
     bear_count = sum(1 for tf in timeframes if "BEARISH" in tf['trend'])
@@ -197,7 +197,7 @@ def calculate_trade_targets(price, tf15, signal):
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- منبه الصفقات المضمونة SMC ---
+# --- منبه الصفقات المضمونة SMC (معدل لإرسال التنبيهات فور ملامسة الأوردر بلوك) ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
@@ -211,19 +211,25 @@ def auto_alert_loop():
 
                     is_high_winrate = False
                     alert_type = ""
+                    signal_type = "WAIT"
 
-                    if "BUY" in res['signal'] and tf15['demand_low'] <= p <= (tf15['demand_high'] + 2.0):
+                    # 1. فحص ملامسة منطقة الطلب / الأوردر بلوك الشرائي
+                    if tf15['demand_low'] > 0 and tf15['demand_low'] <= p <= (tf15['demand_high'] + 1.5):
                         is_high_winrate = True
                         alert_type = "🔥 **صفقة شراء VIP (ملامسة منطقة الطلب 15M)**"
-                    elif "SELL" in res['signal'] and (tf15['supply_low'] - 2.0) <= p <= tf15['supply_high']:
+                        signal_type = "BUY"
+
+                    # 2. فحص ملامسة منطقة العرض / الأوردر بلوك البيعي
+                    elif tf15['supply_high'] > 0 and (tf15['supply_low'] - 1.5) <= p <= tf15['supply_high']:
                         is_high_winrate = True
                         alert_type = "🔥 **صفقة بيع VIP (ملامسة منطقة العرض 15M)**"
+                        signal_type = "SELL"
 
-                    current_key = f"{res['signal']}_{is_high_winrate}_{round(p, 1)}"
+                    current_key = f"{signal_type}_{round(p, 1)}"
 
                     if is_high_winrate and current_key != last_alert_key:
                         last_alert_key = current_key
-                        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf15, res['signal'])
+                        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf15, signal_type)
 
                         alert_msg = (
                             f"🚨 **تنبيه صفقة VIP معتمدة (Spot Gold)!**\n"
@@ -244,7 +250,7 @@ def auto_alert_loop():
         except Exception as e:
             print(f"Error in alert loop: {e}")
 
-        time.sleep(900)
+        time.sleep(300) # فحص مستمر كل 5 دقائق
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
@@ -348,7 +354,7 @@ def send_alert_status(message):
         "🔔 **نظام التنبيهات التلقائي (SMC VIP):**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "✅ **الحالة:** مُفعل ويعمل في الخلفية.\n"
-        "⏱️ **معدل الفحص:** كل 15 دقيقة تلقائياً.\n"
+        "⏱️ **معدل الفحص:** كل 5 دقائق تلقائياً.\n"
         "🎯 **الهدف:** إرسال إشعار فوري عند ملامسة السعر لأوردر بلوك قوي (Demand/Supply) على فريم 15M."
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
