@@ -71,7 +71,7 @@ def get_live_price():
 
 # --- جلب الشمعات مع معالجة حظر السيرفرات وإعادة المحاولة ---
 def fetch_candles_yf(interval='30m', period='5d'):
-    for attempt in range(3):  # محاولة جلب الشمعات 3 مرات عند الفشل
+    for attempt in range(3):  
         try:
             ticker = yf.Ticker("XAUUSD=X")
             df = ticker.history(period=period, interval=interval)
@@ -81,12 +81,11 @@ def fetch_candles_yf(interval='30m', period='5d'):
         except Exception as e:
             print(f"Attempt {attempt+1} failed for interval {interval}: {e}")
             time.sleep(1)
-            
+
     return pd.DataFrame()
 
-# --- خوارزمية تحليل هيكل السوق وحساب المناطق الذكية حتى مع نقص البيانات ---
+# --- خوارزمية تحليل هيكل السوق ---
 def analyze_timeframe(df, current_price=0):
-    # حالة الاحتياط: لو فشل جلب الشمعات كلياً، نحسب مناطق تقديرية بناءً على السعر الحقيقي
     if df.empty or len(df) < 3:
         if current_price > 0:
             d_low, d_high = round(current_price - 6.0, 1), round(current_price - 3.5, 1)
@@ -157,17 +156,22 @@ def scan_multi_timeframe_smc():
     tf_4h  = analyze_timeframe(df_4h, price)
     tf_1d  = analyze_timeframe(df_1d, price)
 
-    bull_count = sum(1 for tf in [tf_15m, tf_30m, tf_1h, tf_4h, tf_1d] if "BULLISH" in tf['trend'])
+    timeframes = [tf_15m, tf_30m, tf_1h, tf_4h, tf_1d]
+    
+    # حساب الاتجاهات الفعلية بشكل صريح
+    bull_count = sum(1 for tf in timeframes if "BULLISH" in tf['trend'])
+    bear_count = sum(1 for tf in timeframes if "BEARISH" in tf['trend'])
 
+    # إصلاح منطق إشارة الحسم لمنع التناقض عند وجود قيم NEUTRAL
     if bull_count >= 3:
         market_direction = "صاعد قوي 🟢🚀"
         signal = "BUY Strong 🚀 (توافق صاعد)"
-    elif bull_count <= 1:
+    elif bear_count >= 3:
         market_direction = "هابط قوي 🔴📉"
         signal = "SELL Strong 📉 (توافق هابط)"
     else:
-        market_direction = "عرضي / ذو نطاق ⚪"
-        signal = "WAIT ⏳ (تذبذب)"
+        market_direction = "عرضي / محايد ⚪"
+        signal = "WAIT ⏳ (تذبذب / انتظار)"
 
     return {
         "price": price, 
@@ -193,7 +197,7 @@ def calculate_trade_targets(price, tf15, signal):
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- منبه الصفقات المضمونة SMC (فحص فوراً ثم كل 15 دقيقة) ---
+# --- منبه الصفقات المضمونة SMC ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
@@ -208,7 +212,6 @@ def auto_alert_loop():
                     is_high_winrate = False
                     alert_type = ""
 
-                    # شرط الملامسة أو توفر إشارة اتجاه حاسمة
                     if "BUY" in res['signal'] and tf15['demand_low'] <= p <= (tf15['demand_high'] + 2.0):
                         is_high_winrate = True
                         alert_type = "🔥 **صفقة شراء VIP (ملامسة منطقة الطلب 15M)**"
@@ -240,7 +243,7 @@ def auto_alert_loop():
                                 print(f"Failed alert: {e}")
         except Exception as e:
             print(f"Error in alert loop: {e}")
-            
+
         time.sleep(900)
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
