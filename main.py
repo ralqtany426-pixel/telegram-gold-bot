@@ -86,7 +86,7 @@ def fetch_candles_yf(interval='30m', period='5d'):
 
     return pd.DataFrame()
 
-# --- خوارزمية تحليل هيكل السوق المعدلة ---
+# --- خوارزمية تحليل هيكل السوق (التركيز على آخر 12 شمعة للدقة) ---
 def analyze_timeframe(df, current_price=0):
     if df.empty or len(df) < 5 or current_price == 0:
         d_low, d_high = round(current_price - 4.5, 1), round(current_price - 2.0, 1)
@@ -100,11 +100,10 @@ def analyze_timeframe(df, current_price=0):
             "fvg": "منطقة متوازنة ⚪", "high": round(current_price + 5, 2), "low": round(current_price - 5, 2)
         }
 
-    # التركيز على آخر 20 شمعة فقط لمنع أخذ مستويات قديمة بعيدة عن السعر
-    recent_df = df.tail(20)
+    # التركيز على آخر 12 شمعة لمنع أخذ مستويات بعيدة جداً
+    recent_df = df.tail(12)
     current = current_price if current_price > 0 else recent_df['Close'].iloc[-1]
 
-    # تحديد الاتجاه بناءً على الشموع الأخيرة والـ EMA
     ema = recent_df['Close'].ewm(span=10, adjust=False).mean().iloc[-1]
     last_close = recent_df['Close'].iloc[-1]
     prev_close = recent_df['Close'].iloc[-2]
@@ -119,25 +118,24 @@ def analyze_timeframe(df, current_price=0):
     d_low, d_high = 0, 0
     s_low, s_high = 0, 0
 
-    # البحث عن أوردر بلوك شرائي قادم وقريب من السعر
+    # أوردر بلوك شرائي
     for i in range(len(recent_df)-2, 0, -1):
         if recent_df['Close'].iloc[i] < recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] > recent_df['High'].iloc[i]:
             candidate_low = round(recent_df['Low'].iloc[i], 1)
             candidate_high = round(recent_df['High'].iloc[i], 1)
-            if candidate_high <= current + 2.0 and candidate_low >= current - 25.0:
+            if candidate_high <= current + 2.0 and candidate_low >= current - 20.0:
                 d_low, d_high = candidate_low, candidate_high
                 break
 
-    # البحث عن أوردر بلوك بيعي قادم وقريب من السعر
+    # أوردر بلوك بيعي
     for i in range(len(recent_df)-2, 0, -1):
         if recent_df['Close'].iloc[i] > recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] < recent_df['Low'].iloc[i]:
             candidate_low = round(recent_df['Low'].iloc[i], 1)
             candidate_high = round(recent_df['High'].iloc[i], 1)
-            if candidate_low >= current - 2.0 and candidate_high <= current + 25.0:
+            if candidate_low >= current - 2.0 and candidate_high <= current + 20.0:
                 s_low, s_high = candidate_low, candidate_high
                 break
 
-    # تعيين مستويات افتراضية منطقية قريبة في حال عدم وجود أوردر بلوك واضح
     if d_low == 0 or d_high == 0:
         d_low, d_high = round(current - 5.0, 1), round(current - 2.5, 1)
     if s_low == 0 or s_high == 0:
@@ -202,27 +200,27 @@ def scan_multi_timeframe_smc():
         "signal": signal
     }
 
-# --- حساب الأهداف وقف الخسارة المحسن ---
-def calculate_trade_targets(price, tf15, signal):
+# --- حساب الأهداف بناءً على فريم 30M ---
+def calculate_trade_targets(price, tf30, signal):
     if "WAIT" in signal:
         return "WAIT ⏳ (انتظار إشعار مؤكد)", price, price, price, price
 
     if "BUY" in signal:
-        sl = round(tf15['demand_low'] - 2.0, 2) if tf15['demand_low'] > 0 else round(price - 4.0, 2)
+        sl = round(tf30['demand_low'] - 2.0, 2) if tf30['demand_low'] > 0 else round(price - 4.0, 2)
         risk = abs(price - sl)
         tp1 = round(price + (risk * 1.5), 2)
         tp2 = round(price + (risk * 2.5), 2)
         tp3 = round(price + (risk * 3.5), 2)
         return "BUY 🟢", sl, tp1, tp2, tp3
     else:
-        sl = round(tf15['supply_high'] + 2.0, 2) if tf15['supply_high'] > 0 else round(price + 4.0, 2)
+        sl = round(tf30['supply_high'] + 2.0, 2) if tf30['supply_high'] > 0 else round(price + 4.0, 2)
         risk = abs(sl - price)
         tp1 = round(price - (risk * 1.5), 2)
         tp2 = round(price - (risk * 2.5), 2)
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- منبه الصفقات المضمونة SMC ---
+# --- منبه الصفقات المضمونة على 30M ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
@@ -232,27 +230,27 @@ def auto_alert_loop():
                 res = scan_multi_timeframe_smc()
                 if res:
                     p = res['price']
-                    tf15 = res['15m']
+                    tf30 = res['30m']
 
                     is_high_winrate = False
                     alert_type = ""
                     signal_type = "WAIT"
 
-                    if tf15['demand_low'] > 0 and (tf15['demand_low'] - 1.0) <= p <= (tf15['demand_high'] + 1.5):
+                    if tf30['demand_low'] > 0 and (tf30['demand_low'] - 1.0) <= p <= (tf30['demand_high'] + 1.5):
                         is_high_winrate = True
-                        alert_type = "🔥 **صفقة شراء VIP (ملامسة منطقة الطلب 15M)**"
+                        alert_type = "🔥 **صفقة شراء VIP (ملامسة منطقة الطلب 30M)**"
                         signal_type = "BUY"
 
-                    elif tf15['supply_high'] > 0 and (tf15['supply_low'] - 1.5) <= p <= (tf15['supply_high'] + 1.0):
+                    elif tf30['supply_high'] > 0 and (tf30['supply_low'] - 1.5) <= p <= (tf30['supply_high'] + 1.0):
                         is_high_winrate = True
-                        alert_type = "🔥 **صفقة بيع VIP (ملامسة منطقة العرض 15M)**"
+                        alert_type = "🔥 **صفقة بيع VIP (ملامسة منطقة العرض 30M)**"
                         signal_type = "SELL"
 
                     current_key = f"{signal_type}_{round(p, 1)}"
 
                     if is_high_winrate and current_key != last_alert_key:
                         last_alert_key = current_key
-                        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf15, signal_type)
+                        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, signal_type)
 
                         alert_msg = (
                             f"🚨 **تنبيه صفقة VIP معتمدة (Spot Gold)!**\n"
@@ -289,7 +287,7 @@ def start_cmd(message):
     btn_alerts = types.KeyboardButton("🔔 حالة التنبيهات")
     markup.add(btn_live, btn_vip, btn_sr, btn_gold, btn_alerts)
 
-    bot.send_message(message.chat.id, "مرحباً بك! تم تحديث البوت ليعمل بدقة عالية وبدون انقطاع ⚡", reply_markup=markup)
+    bot.send_message(message.chat.id, "مرحباً بك! تم تحديث البوت ويعمل الآن بفرز دقيق على فريم 30M ⚡", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
@@ -307,12 +305,12 @@ def send_vip_trade(message):
         return
 
     p = res['price']
-    tf15 = res['15m']
-    trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf15, res['signal'])
+    tf30 = res['30m']
+    trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, res['signal'])
 
     if "WAIT" in trade_type:
         msg = (
-            f"🔥 **توصية VIP بناءً على SMC & Order Block:**\n"
+            f"🔥 **توصية VIP بناءً على SMC (فريم 30M):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"🎯 **حالة السوق:** `انتظار ⏳`\n"
             f"📍 **السعر اللحظي:** `{p}` $\n\n"
@@ -322,7 +320,7 @@ def send_vip_trade(message):
         )
     else:
         msg = (
-            f"🔥 **توصية VIP بناءً على SMC & Order Block:**\n"
+            f"🔥 **توصية VIP بناءً على SMC (فريم 30M):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"🎯 **نوع الصفقة:** `{trade_type}`\n"
             f"📍 **سعر الدخول اللحظي:** `{p}` $\n\n"
@@ -389,7 +387,7 @@ def send_alert_status(message):
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "✅ **الحالة:** مُفعل ويعمل في الخلفية.\n"
         "⏱️ **معدل الفحص:** كل 30 ثانية تلقائياً.\n"
-        "🎯 **الهدف:** إرسال إشعار فوري عند ملامسة السعر لأوردر بلوك قوي (Demand/Supply) على فريم 15M."
+        "🎯 **الهدف:** إرسال إشعار فوري عند ملامسة السعر لأوردر بلوك قوي (Demand/Supply) على فريم 30M."
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
