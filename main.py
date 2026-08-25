@@ -103,7 +103,7 @@ def analyze_timeframe(df, current_price=0):
     # التركيز على آخر 20 شمعة فقط لمنع أخذ مستويات قديمة بعيدة عن السعر
     recent_df = df.tail(20)
     current = current_price if current_price > 0 else recent_df['Close'].iloc[-1]
-    
+
     # تحديد الاتجاه بناءً على الشموع الأخيرة والـ EMA
     ema = recent_df['Close'].ewm(span=10, adjust=False).mean().iloc[-1]
     last_close = recent_df['Close'].iloc[-1]
@@ -202,8 +202,11 @@ def scan_multi_timeframe_smc():
         "signal": signal
     }
 
-# --- حساب الأهداف وقف الخسارة ---
+# --- حساب الأهداف وقف الخسارة المحسن ---
 def calculate_trade_targets(price, tf15, signal):
+    if "WAIT" in signal:
+        return "WAIT ⏳ (انتظار إشعار مؤكد)", price, price, price, price
+
     if "BUY" in signal:
         sl = round(tf15['demand_low'] - 2.0, 2) if tf15['demand_low'] > 0 else round(price - 4.0, 2)
         risk = abs(price - sl)
@@ -307,18 +310,29 @@ def send_vip_trade(message):
     tf15 = res['15m']
     trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf15, res['signal'])
 
-    msg = (
-        f"🔥 **توصية VIP بناءً على SMC & Order Block:**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎯 **نوع الصفقة:** `{trade_type}`\n"
-        f"📍 **سعر الدخول اللحظي:** `{p}` $\n\n"
-        f"🛑 **وقف الخسارة (SL):** `{sl}` $\n\n"
-        f"🎯 **الهدف الأول (TP1):** `{tp1}` $\n"
-        f"🎯 **الهدف الثاني (TP2):** `{tp2}` $\n"
-        f"🎯 **الهدف الثالث (TP3):** `{tp3}` $\n\n"
-        f"🧭 **الاتجاه العام:** `{res['market_direction']}`\n"
-        f"━━━━━━━━━━━━━━━━━━━━━"
-    )
+    if "WAIT" in trade_type:
+        msg = (
+            f"🔥 **توصية VIP بناءً على SMC & Order Block:**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎯 **حالة السوق:** `انتظار ⏳`\n"
+            f"📍 **السعر اللحظي:** `{p}` $\n\n"
+            f"💡 **الملاحظة:** السوق حالياً في حالة تذبذب/عرضية. انتظر ملامسة منطقة طلب أو عرض واضحة ليتم إرسال التنبيه التلقائي.\n"
+            f"🧭 **الاتجاه العام:** `{res['market_direction']}`\n"
+            f"━━━━━━━━━━━━━━━━━━━━━"
+        )
+    else:
+        msg = (
+            f"🔥 **توصية VIP بناءً على SMC & Order Block:**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎯 **نوع الصفقة:** `{trade_type}`\n"
+            f"📍 **سعر الدخول اللحظي:** `{p}` $\n\n"
+            f"🛑 **وقف الخسارة (SL):** `{sl}` $\n\n"
+            f"🎯 **الهدف الأول (TP1):** `{tp1}` $\n"
+            f"🎯 **الهدف الثاني (TP2):** `{tp2}` $\n"
+            f"🎯 **الهدف الثالث (TP3):** `{tp3}` $\n\n"
+            f"🧭 **الاتجاه العام:** `{res['market_direction']}`\n"
+            f"━━━━━━━━━━━━━━━━━━━━━"
+        )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "📊 الدعم والمقاومة")
