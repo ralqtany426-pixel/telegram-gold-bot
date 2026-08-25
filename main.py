@@ -336,10 +336,22 @@ def send_vip_trade(message):
 @bot.message_handler(func=lambda m: m.text == "📊 الدعم والمقاومة")
 def send_support_resistance(message):
     p = get_live_price()
-    df_1h = fetch_candles_yf('1h', '7d')
+    df_1h = fetch_candles_yf('1h', '5d')
     if p:
-        r1 = round(df_1h['High'].tail(24).max(), 2) if not df_1h.empty else round(p + 12.0, 2)
-        s1 = round(df_1h['Low'].tail(24).min(), 2) if not df_1h.empty else round(p - 12.0, 2)
+        if not df_1h.empty:
+            recent_highs = df_1h['High'].tail(24)
+            recent_lows = df_1h['Low'].tail(24)
+            
+            # فلترة نضمن بها أن تكون المقاومة أعلى من السعر اللحظي والدعم أقل منه
+            r1_candidates = recent_highs[recent_highs > p]
+            s1_candidates = recent_lows[recent_lows < p]
+            
+            r1 = round(r1_candidates.min(), 2) if not r1_candidates.empty else round(p + 10.0, 2)
+            s1 = round(s1_candidates.max(), 2) if not s1_candidates.empty else round(p - 10.0, 2)
+        else:
+            r1 = round(p + 10.0, 2)
+            s1 = round(p - 10.0, 2)
+
         msg = (
             f"📊 **مستويات الدعم والمقاومة (Spot Gold):**\n"
             f"📍 **السعر الحالي:** `{p}` $\n"
