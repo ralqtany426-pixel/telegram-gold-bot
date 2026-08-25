@@ -86,6 +86,19 @@ def fetch_candles_yf(interval='30m', period='5d'):
 
     return pd.DataFrame()
 
+# --- جلب فريم 4 ساعات عن طريق Resampling من فريم 1H لضمان الدقة ---
+def fetch_4h_candles():
+    df_1h = fetch_candles_yf('1h', '10d')
+    if not df_1h.empty:
+        df_4h = df_1h.resample('4H').agg({
+            'Open': 'first',
+            'High': 'max',
+            'Low': 'min',
+            'Close': 'last'
+        }).dropna()
+        return df_4h
+    return pd.DataFrame()
+
 # --- خوارزمية تحليل هيكل السوق (التركيز على آخر 12 شمعة للدقة) ---
 def analyze_timeframe(df, current_price=0):
     if df.empty or len(df) < 5 or current_price == 0:
@@ -100,7 +113,6 @@ def analyze_timeframe(df, current_price=0):
             "fvg": "منطقة متوازنة ⚪", "high": round(current_price + 5, 2), "low": round(current_price - 5, 2)
         }
 
-    # التركيز على آخر 12 شمعة لمنع أخذ مستويات بعيدة جداً
     recent_df = df.tail(12)
     current = current_price if current_price > 0 else recent_df['Close'].iloc[-1]
 
@@ -169,7 +181,7 @@ def scan_multi_timeframe_smc():
     df_15m = fetch_candles_yf('15m', '2d')
     df_30m = fetch_candles_yf('30m', '3d')
     df_1h  = fetch_candles_yf('1h', '5d')
-    df_4h  = fetch_candles_yf('60m', '10d')
+    df_4h  = fetch_4h_candles()
     df_1d  = fetch_candles_yf('1d', '30d')
 
     tf_15m = analyze_timeframe(df_15m, price)
@@ -271,7 +283,7 @@ def auto_alert_loop():
         except Exception as e:
             print(f"Error in alert loop: {e}")
 
-        time.sleep(30)
+        time.sleep(45) # زيادة المدى لتفادي حظر الطلبات
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
@@ -341,11 +353,10 @@ def send_support_resistance(message):
         if not df_1h.empty:
             recent_highs = df_1h['High'].tail(24)
             recent_lows = df_1h['Low'].tail(24)
-            
-            # فلترة نضمن بها أن تكون المقاومة أعلى من السعر اللحظي والدعم أقل منه
+
             r1_candidates = recent_highs[recent_highs > p]
             s1_candidates = recent_lows[recent_lows < p]
-            
+
             r1 = round(r1_candidates.min(), 2) if not r1_candidates.empty else round(p + 10.0, 2)
             s1 = round(s1_candidates.max(), 2) if not s1_candidates.empty else round(p - 10.0, 2)
         else:
@@ -398,7 +409,7 @@ def send_alert_status(message):
         "🔔 **نظام التنبيهات التلقائي (SMC VIP):**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "✅ **الحالة:** مُفعل ويعمل في الخلفية.\n"
-        "⏱️ **معدل الفحص:** كل 30 ثانية تلقائياً.\n"
+        "⏱️ **معدل الفحص:** كل 45 ثانية تلقائياً.\n"
         "🎯 **الهدف:** إرسال إشعار فوري عند ملامسة السعر لأوردر بلوك قوي (Demand/Supply) على فريم 30M."
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
