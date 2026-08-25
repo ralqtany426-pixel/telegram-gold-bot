@@ -184,12 +184,12 @@ def calculate_trade_targets(price, tf15, signal):
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- منبه الصفقات المضمونة SMC ---
+# --- منبه الصفقات المضمونة SMC (فحص كل 15 دقيقة) ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
         try:
-            time.sleep(60)
+            time.sleep(900)  # الفحص تلقائياً كل 15 دقيقة (900 ثانية)
             users = get_all_users()
             if not users:
                 continue
@@ -198,10 +198,10 @@ def auto_alert_loop():
             if res:
                 p = res['price']
                 tf15 = res['15m']
-                
+
                 is_high_winrate = False
                 alert_type = ""
-                
+
                 if "BUY" in res['signal'] and tf15['demand_low'] <= p <= (tf15['demand_high'] + 1.0):
                     is_high_winrate = True
                     alert_type = "🔥 **صفقة شراء VIP ناجحة! (ملامسة أوردر بلوك طلب 15M)**"
@@ -245,8 +245,9 @@ def start_cmd(message):
     btn_vip = types.KeyboardButton("🔥 صفقات VIP (الطلب والعرض)")
     btn_sr = types.KeyboardButton("📊 الدعم والمقاومة")
     btn_gold = types.KeyboardButton("تحليل الذهب 🥇")
-    markup.add(btn_live, btn_vip, btn_sr, btn_gold)
-    
+    btn_alerts = types.KeyboardButton("🔔 حالة التنبيهات")
+    markup.add(btn_live, btn_vip, btn_sr, btn_gold, btn_alerts)
+
     bot.send_message(message.chat.id, "مرحباً بك! تم تحسين كود جلب السعر ليعمل بسرعة فائقة وبدون أي انقطاع ⚡", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
@@ -327,6 +328,18 @@ def handle_gold_analysis(message):
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
     else:
         bot.send_message(message.chat.id, "⚠️ يتعذر جلب تحليل الشمعات حالياً، حاول مجدداً.")
+
+@bot.message_handler(func=lambda m: m.text == "🔔 حالة التنبيهات")
+def send_alert_status(message):
+    add_user(message.chat.id)
+    msg = (
+        "🔔 **نظام التنبيهات التلقائي (SMC VIP):**\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "✅ **الحالة:** مُفعل ويعمل في الخلفية.\n"
+        "⏱️ **معدل الفحص:** كل 15 دقيقة تلقائياً.\n"
+        "🎯 **الهدف:** إرسال إشعار فوري عند ملامسة السعر لأوردر بلوك قوي (Demand/Supply) على فريم 15M."
+    )
+    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 # --- Webhook Server لـ Render ---
 @app.route('/')
