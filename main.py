@@ -184,55 +184,54 @@ def calculate_trade_targets(price, tf15, signal):
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- منبه الصفقات المضمونة SMC (فحص كل 15 دقيقة) ---
+# --- منبه الصفقات المضمونة SMC (فحص فوراً ثم كل 15 دقيقة) ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
         try:
-            time.sleep(900)  # الفحص تلقائياً كل 15 دقيقة (900 ثانية)
             users = get_all_users()
-            if not users:
-                continue
+            if users:
+                res = scan_multi_timeframe_smc()
+                if res:
+                    p = res['price']
+                    tf15 = res['15m']
 
-            res = scan_multi_timeframe_smc()
-            if res:
-                p = res['price']
-                tf15 = res['15m']
+                    is_high_winrate = False
+                    alert_type = ""
 
-                is_high_winrate = False
-                alert_type = ""
+                    if "BUY" in res['signal'] and tf15['demand_low'] <= p <= (tf15['demand_high'] + 1.0):
+                        is_high_winrate = True
+                        alert_type = "🔥 **صفقة شراء VIP ناجحة! (ملامسة أوردر بلوك طلب 15M)**"
+                    elif "SELL" in res['signal'] and (tf15['supply_low'] - 1.0) <= p <= tf15['supply_high']:
+                        is_high_winrate = True
+                        alert_type = "🔥 **صفقة بيع VIP ناجحة! (ملامسة أوردر بلوك عرض 15M)**"
 
-                if "BUY" in res['signal'] and tf15['demand_low'] <= p <= (tf15['demand_high'] + 1.0):
-                    is_high_winrate = True
-                    alert_type = "🔥 **صفقة شراء VIP ناجحة! (ملامسة أوردر بلوك طلب 15M)**"
-                elif "SELL" in res['signal'] and (tf15['supply_low'] - 1.0) <= p <= tf15['supply_high']:
-                    is_high_winrate = True
-                    alert_type = "🔥 **صفقة بيع VIP ناجحة! (ملامسة أوردر بلوك عرض 15M)**"
+                    current_key = f"{res['signal']}_{is_high_winrate}_{round(p, 1)}"
 
-                current_key = f"{res['signal']}_{is_high_winrate}_{round(p, 1)}"
+                    if is_high_winrate and current_key != last_alert_key:
+                        last_alert_key = current_key
+                        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf15, res['signal'])
 
-                if is_high_winrate and current_key != last_alert_key:
-                    last_alert_key = current_key
-                    trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf15, res['signal'])
-
-                    alert_msg = (
-                        f"🚨 **تنبيه صفقة VIP معتمدة (Spot Gold)!**\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"{alert_type}\n\n"
-                        f"📍 **سعر الدخول:** `{p}` $\n"
-                        f"🛑 **وقف الخسارة (SL):** `{sl}` $\n\n"
-                        f"🎯 **الهدف الأول (TP1):** `{tp1}` $\n"
-                        f"🎯 **الهدف الثاني (TP2):** `{tp2}` $\n"
-                        f"🎯 **الهدف الثالث (TP3):** `{tp3}` $\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━"
-                    )
-                    for chat_id in users:
-                        try:
-                            bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
-                        except Exception as e:
-                            print(f"Failed alert: {e}")
+                        alert_msg = (
+                            f"🚨 **تنبيه صفقة VIP معتمدة (Spot Gold)!**\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"{alert_type}\n\n"
+                            f"📍 **سعر الدخول:** `{p}` $\n"
+                            f"🛑 **وقف الخسارة (SL):** `{sl}` $\n\n"
+                            f"🎯 **الهدف الأول (TP1):** `{tp1}` $\n"
+                            f"🎯 **الهدف الثاني (TP2):** `{tp2}` $\n"
+                            f"🎯 **الهدف الثالث (TP3):** `{tp3}` $\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━"
+                        )
+                        for chat_id in users:
+                            try:
+                                bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
+                            except Exception as e:
+                                print(f"Failed alert: {e}")
         except Exception as e:
             print(f"Error in alert loop: {e}")
+            
+        time.sleep(900)  # الانتظار لمدة 15 دقيقة بعد اكتمال الفحص
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
@@ -336,7 +335,7 @@ def send_alert_status(message):
         "🔔 **نظام التنبيهات التلقائي (SMC VIP):**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "✅ **الحالة:** مُفعل ويعمل في الخلفية.\n"
-        "⏱️ **معدل الفحص:** كل 15 دقيقة تلقائياً.\n"
+        "⏱️ **معدل الفحص:** فحص فوري عند البدء ثم كل 15 دقيقة تلقائياً.\n"
         "🎯 **الهدف:** إرسال إشعار فوري عند ملامسة السعر لأوردر بلوك قوي (Demand/Supply) على فريم 15M."
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
