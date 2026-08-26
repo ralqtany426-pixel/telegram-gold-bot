@@ -144,30 +144,29 @@ def multi_timeframe_scan():
         "15m": tf_15m, "30m": tf_30m, "1h": tf_1h, "4h": tf_4h, "1d": tf_1d
     }
 
-# --- خوارزمية الأهداف: سعر دخول حقيقي مثل MT5 + وقف خسارة محكم واحترافي ---
+# --- تعديل خوارزمية الأهداف لجعل وقف الخسارة قريباً ومحكماً (بمسافة آمنة 8 إلى 12 دولار فقط) ---
 def calculate_targets(price, tf30, signal):
     if "BUY" in signal:
-        entry = price  # السعر اللحظي المطابق للمنصة
-        # وقف خسارة محكم وقريب تحت منطقة الطلب أو السعر بمسافة آمنة ومدروسة
-        sl = round(tf30['demand_low'] - 4.0, 2) if tf30['demand_low'] > 0 else round(entry - 12.0, 2)
-        risk = abs(entry - sl)
-        tp1 = round(entry + (risk * 1.5), 2)
-        tp2 = round(entry + (risk * 2.5), 2)
-        tp3 = round(entry + (risk * 3.5), 2)
+        entry = price
+        # وقف خسارة قريب ومحكم بمسافة 10 دولارات تحت السعر أو منطقة الطلب القريبة
+        sl = round(entry - 10.0, 2)
+        risk = abs(entry - sl) # ستكون 10 دولارات بالضبط
+        tp1 = round(entry + (risk * 1.5), 2)  # الهدف الأول (15 دولار ربح)
+        tp2 = round(entry + (risk * 2.5), 2)  # الهدف الثاني (25 دولار ربح)
+        tp3 = round(entry + (risk * 3.5), 2)  # الهدف الثالث (35 دولار ربح)
         rr_ratio = "1 : 3.5"
         return "BUY 🟢", entry, sl, tp1, tp2, tp3, rr_ratio
     else:
-        entry = price  # السعر اللحظي المطابق للمنصة
-        # وقف خسارة محكم وقريب فوق قمة العرض أو السعر بمسافة آمنة ومدروسة (احترافي تماماً)
-        sl = round(tf30['supply_high'] + 4.0, 2) if tf30['supply_high'] > 0 else round(entry + 12.0, 2)
-        risk = abs(sl - entry)
+        entry = price
+        # وقف خسارة قريب ومحكم بمسافة 10 دولارات فوق السعر الحالي
+        sl = round(entry + 10.0, 2)
+        risk = abs(sl - entry) # ستكون 10 دولارات بالضبط
         tp1 = round(entry - (risk * 1.5), 2)
         tp2 = round(entry - (risk * 2.5), 2)
         tp3 = round(entry - (risk * 3.5), 2)
         rr_ratio = "1 : 3.5"
         return "SELL 🔴", entry, sl, tp1, tp2, tp3, rr_ratio
 
-# --- نظام التنبيهات الاحترافي في الخلفية ---
 def auto_alert_loop():
     last_signal_state = ""
     while True:
@@ -220,7 +219,6 @@ def auto_alert_loop():
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
-# --- أوامر واجهة البوت ---
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     add_user(message.chat.id)
@@ -284,7 +282,7 @@ def handle_gold_analysis(message):
         f"👑 **التقرير الفني الشامل (Multi-Timeframe Pro)** 👑\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 **السعر اللحظي:** `{data['price']}` $\n"
-        f"⚡ **الاتجاه العام العام:** `{data['signal']}`\n"
+        f"⚡ **الاتجاه العام:** `{data['signal']}`\n"
         f"⭐ **قوة الفرصة:** `{data['strength']}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🔹 **15 دقيقة:** `{data['15m']['trend']}` | FVG: `{data['15m']['fvg']}`\n"
