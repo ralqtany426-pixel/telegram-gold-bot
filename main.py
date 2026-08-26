@@ -7,7 +7,23 @@ import telebot
 import pandas as pd
 import yfinance as yf
 from telebot import types
+from flask import Flask
 
+# --- إعداد خادم الويب الوهمي لـ Render (لحل مشكلة Port Binding) ---
+app = Flask(__name__)
+
+@app.route('/')
+def health_check():
+    return "Bot is alive and running!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
+# تشغيل سيرفر الويب في خلفية الكود لترضى منصة Render
+threading.Thread(target=run_flask, daemon=True).start()
+
+# --- إعدادات البوت والـ Token ---
 TOKEN = os.environ.get("BOT_TOKEN")
 
 if not TOKEN:
@@ -118,7 +134,7 @@ def analyze_market_structure(df):
 
 def multi_timeframe_scan():
     price = get_live_price()
-    
+
     tf_15m = analyze_market_structure(fetch_candles('15m', '2d'))
     tf_30m = analyze_market_structure(fetch_candles('30m', '4d'))
     tf_1h  = analyze_market_structure(fetch_candles('1h', '7d'))
@@ -163,7 +179,7 @@ def auto_alert_loop():
                 data = multi_timeframe_scan()
                 p = data['price']
                 tf30 = data['30m']
-                
+
                 is_valid_opportunity = False
                 alert_title = ""
 
@@ -199,7 +215,7 @@ def auto_alert_loop():
                             pass
         except Exception as e:
             print(f"Alert Error: {e}")
-        
+
         time.sleep(300)
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
@@ -249,7 +265,7 @@ def send_support_resistance(message):
     df_1h = fetch_candles('1h', '7d')
     r1 = round(df_1h['High'].max(), 2) if not df_1h.empty else round(p + 15.0, 2)
     s1 = round(df_1h['Low'].min(), 2) if not df_1h.empty else round(p - 15.0, 2)
-    
+
     msg = (
         f"📊 **مستويات الدعم والمقاومة الرئيسية:**\n"
         f"📍 **السعر الحالي:** `{p}` $\n"
