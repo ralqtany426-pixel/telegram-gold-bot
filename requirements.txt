@@ -1,5 +1,6 @@
-pyTelegramBotAPI
-requests
+Flask
+telebot
 pandas
 yfinance
-flask
+requests
+gunicorn
