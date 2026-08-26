@@ -99,7 +99,6 @@ def analyze_timeframe(df, current_price=0):
             "is_sweep": False
         }
 
-    # زيادة النطاق لـ 100 شمعة
     recent_df = df.tail(100).copy()
     current = current_price if current_price > 0 else recent_df['Close'].iloc[-1]
 
@@ -117,9 +116,8 @@ def analyze_timeframe(df, current_price=0):
     d_low, d_high = 0, 0
     s_low, s_high = 0, 0
 
-    # 1. البحث عن أقرب Order Block شرائي (توسيع نطاق المسافة إلى 60 دولار بدلاً من 20)
+    # 1. البحث عن أقرب Order Block شرائي (توسيع نطاق المسافة إلى 60 دولار)
     for i in range(len(recent_df)-3, 1, -1):
-        # البحث عن شمعة هابطة تلتها حركة صاعدة
         if recent_df['Close'].iloc[i] < recent_df['Open'].iloc[i]:
             if recent_df['Close'].iloc[i+1] > recent_df['Open'].iloc[i] or recent_df['Close'].iloc[i+2] > recent_df['High'].iloc[i]:
                 c_low = round(recent_df['Low'].iloc[i], 1)
@@ -234,6 +232,26 @@ def scan_multi_timeframe_smc():
         "signal": signal
     }
 
+# --- اختيار الفريم النشط باحترافية ---
+def select_active_timeframe(res, price):
+    # الفحص الأولي من الـ 30M
+    active_tf = res['30m']
+    
+    # التبديل بين الـ 15M والـ 1H إذا لم تجد مناطق على 30M
+    if active_tf['demand_low'] == 0 and active_tf['supply_low'] == 0:
+        if res['15m']['demand_low'] > 0 or res['15m']['supply_low'] > 0:
+            active_tf = res['15m']
+        elif res['1h']['demand_low'] > 0 or res['1h']['supply_low'] > 0:
+            active_tf = res['1h']
+
+    # إعطاء أولوية فورية لمناطق فريم 1H إذا كان السعر داخل حدودها اللحظية
+    if res['1h']['demand_low'] > 0 and (res['1h']['demand_low'] - 2.0) <= price <= (res['1h']['demand_high'] + 2.0):
+        active_tf = res['1h']
+    elif res['1h']['supply_low'] > 0 and (res['1h']['supply_low'] - 2.0) <= price <= (res['1h']['supply_high'] + 2.0):
+        active_tf = res['1h']
+
+    return active_tf
+
 # --- حساب الأهداف ---
 def calculate_trade_targets(price, active_tf, signal_type):
     if "BUY" in signal_type:
@@ -267,13 +285,7 @@ def auto_alert_loop():
                 res = scan_multi_timeframe_smc()
                 if res:
                     p = res['price']
-
-                    active_tf = res['30m']
-                    if active_tf['demand_low'] == 0 and active_tf['supply_low'] == 0:
-                        if res['15m']['demand_low'] > 0 or res['15m']['supply_low'] > 0:
-                            active_tf = res['15m']
-                        elif res['1h']['demand_low'] > 0 or res['1h']['supply_low'] > 0:
-                            active_tf = res['1h']
+                    active_tf = select_active_timeframe(res, p)
 
                     is_alert = False
                     alert_type = ""
@@ -368,13 +380,7 @@ def send_vip_trade(message):
         return
 
     p = res['price']
-
-    active_tf = res['30m']
-    if active_tf['demand_low'] == 0 and active_tf['supply_low'] == 0:
-        if res['15m']['demand_low'] > 0 or res['15m']['supply_low'] > 0:
-            active_tf = res['15m']
-        elif res['1h']['demand_low'] > 0 or res['1h']['supply_low'] > 0:
-            active_tf = res['1h']
+    active_tf = select_active_timeframe(res, p)
 
     if active_tf['demand_low'] > 0 and p <= active_tf['demand_high'] + 3.0:
         trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, "BUY")
