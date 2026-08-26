@@ -6,17 +6,14 @@ import requests
 import telebot
 import pandas as pd
 import yfinance as yf
-from flask import Flask, request
 from telebot import types
 
 TOKEN = os.environ.get("BOT_TOKEN")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # رابط تطبيقك على Render
 
 if not TOKEN:
     raise ValueError("BOT_TOKEN غير موجود في متغيرات البيئة!")
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
-app = Flask(__name__)
 
 DB_NAME = "users.db"
 
@@ -287,24 +284,7 @@ def send_alert_status(message):
     add_user(message.chat.id)
     bot.send_message(message.chat.id, "🔔 **نظام التنبيهات الذكي:** يعمل تلقائياً في الخلفية ويقوم بفحص السوق كل **5 دقائق** لإرسال الصفقات الناجحة فوراً للمشتركين.", parse_mode="Markdown")
 
-@app.route('/')
-@app.route('/health')
-def health_check():
-    return "Bot is active and running successfully!", 200
-
-@app.route(f'/{TOKEN}', methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '', 200
-    return 'Forbidden', 403
-
 if __name__ == '__main__':
+    print("Bot is running with Polling...")
     bot.remove_webhook()
-    if WEBHOOK_URL:
-        bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
-    
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    bot.infinity_polling(skip_pending=True)
