@@ -168,23 +168,23 @@ def scan_multi_timeframe_smc():
     }
 
 # --- حساب الأهداف وقف الخسارة ---
-def calculate_trade_targets(price, tf15, signal):
+def calculate_trade_targets(price, tf30, signal):
     if "BUY" in signal:
-        sl = round(tf15['demand_low'] - 2.5, 2) if tf15['demand_low'] > 0 else round(price - 5.0, 2)
+        sl = round(tf30['demand_low'] - 2.5, 2) if tf30['demand_low'] > 0 else round(price - 5.0, 2)
         risk = abs(price - sl)
         tp1 = round(price + (risk * 1.5), 2)
         tp2 = round(price + (risk * 2.5), 2)
         tp3 = round(price + (risk * 3.5), 2)
         return "BUY 🟢", sl, tp1, tp2, tp3
     else:
-        sl = round(tf15['supply_high'] + 2.5, 2) if tf15['supply_high'] > 0 else round(price + 5.0, 2)
+        sl = round(tf30['supply_high'] + 2.5, 2) if tf30['supply_high'] > 0 else round(price + 5.0, 2)
         risk = abs(sl - price)
         tp1 = round(price - (risk * 1.5), 2)
         tp2 = round(price - (risk * 2.5), 2)
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- منبه الصفقات المضمونة SMC (فحص فوراً ثم كل 15 دقيقة) ---
+# --- منبه الصفقات المضمونة SMC على فريم 30 دقيقة ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
@@ -194,26 +194,26 @@ def auto_alert_loop():
                 res = scan_multi_timeframe_smc()
                 if res:
                     p = res['price']
-                    tf15 = res['15m']
+                    tf30 = res['30m'] # اعتماد فريم 30 دقيقة
 
                     is_high_winrate = False
                     alert_type = ""
 
-                    if "BUY" in res['signal'] and tf15['demand_low'] <= p <= (tf15['demand_high'] + 1.0):
+                    if "BUY" in res['signal'] and tf30['demand_low'] <= p <= (tf30['demand_high'] + 1.0):
                         is_high_winrate = True
-                        alert_type = "🔥 **صفقة شراء VIP ناجحة! (ملامسة أوردر بلوك طلب 15M)**"
-                    elif "SELL" in res['signal'] and (tf15['supply_low'] - 1.0) <= p <= tf15['supply_high']:
+                        alert_type = "🔥 **صفقة شراء VIP ناجحة! (ملامسة أوردر بلوك طلب 30M)**"
+                    elif "SELL" in res['signal'] and (tf30['supply_low'] - 1.0) <= p <= tf30['supply_high']:
                         is_high_winrate = True
-                        alert_type = "🔥 **صفقة بيع VIP ناجحة! (ملامسة أوردر بلوك عرض 15M)**"
+                        alert_type = "🔥 **صفقة بيع VIP ناجحة! (ملامسة أوردر بلوك عرض 30M)**"
 
                     current_key = f"{res['signal']}_{is_high_winrate}_{round(p, 1)}"
 
                     if is_high_winrate and current_key != last_alert_key:
                         last_alert_key = current_key
-                        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf15, res['signal'])
+                        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, res['signal'])
 
                         alert_msg = (
-                            f"🚨 **تنبيه صفقة VIP معتمدة (Spot Gold)!**\n"
+                            f"🚨 **تنبيه صفقة VIP معتمدة (Spot Gold - 30M)!**\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n"
                             f"{alert_type}\n\n"
                             f"📍 **سعر الدخول:** `{p}` $\n"
@@ -247,7 +247,7 @@ def start_cmd(message):
     btn_alerts = types.KeyboardButton("🔔 حالة التنبيهات")
     markup.add(btn_live, btn_vip, btn_sr, btn_gold, btn_alerts)
 
-    bot.send_message(message.chat.id, "مرحباً بك! تم تحسين كود جلب السعر ليعمل بسرعة فائقة وبدون أي انقطاع ⚡", reply_markup=markup)
+    bot.send_message(message.chat.id, "مرحباً بك! تم تحديث النظام للعمل على فريم 30M بنجاح ⚡", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
@@ -265,11 +265,11 @@ def send_vip_trade(message):
         return
 
     p = res['price']
-    tf15 = res['15m']
-    trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf15, res['signal'])
+    tf30 = res['30m'] # اعتماد فريم 30M
+    trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, res['signal'])
 
     msg = (
-        f"🔥 **توصية VIP بناءً على SMC & Order Block:**\n"
+        f"🔥 **توصية VIP بناءً على SMC & Order Block (30M):**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 **نوع الصفقة:** `{trade_type}`\n"
         f"📍 **سعر الدخول اللحظي:** `{p}` $\n\n"
@@ -305,21 +305,19 @@ def handle_gold_analysis(message):
         msg = (
             f"📊 **تقرير هيكل السوق (Spot Gold SMC Pro):**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 **السعر اللحظي (MT5):** `{res['price']}` $\n"
+            f"📍 **السعر اللحظي:** `{res['price']}` $\n"
             f"🧭 **اتجاه السوق الشامل:** `{res['market_direction']}`\n"
             f"⚡ **إشارة الحسم:** `{res['signal']}`\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"🔹 **فريم 15 دقيقة (15M):**\n"
-            f"• الاتجاه: `{res['15m']['trend']}` | FVG: `{res['15m']['fvg']}`\n"
-            f"• الطلب: `{res['15m']['demand']}` | العرض: `{res['15m']['supply']}`\n\n"
+            f"• الاتجاه: `{res['15m']['trend']}` | FVG: `{res['15m']['fvg']}`\n\n"
             f"🔹 **فريم 30 دقيقة (30M):**\n"
             f"• الاتجاه: `{res['30m']['trend']}` | FVG: `{res['30m']['fvg']}`\n"
             f"• الطلب: `{res['30m']['demand']}` | العرض: `{res['30m']['supply']}`\n\n"
             f"🔹 **فريم الساعة (1H):**\n"
             f"• الاتجاه: `{res['1h']['trend']}`\n"
-            f"• الطلب: `{res['1h']['demand']}`\n\n"
             f"🔹 **فريم 4 ساعات (4H):**\n"
-            f"• الاتجاه: `{res['4h']['trend']}`\n\n"
+            f"• الاتجاه: `{res['4h']['trend']}`\n"
             f"🔹 **الفريم اليومي (1D):**\n"
             f"• الاتجاه العام: `{res['1d']['trend']}`\n"
             f"━━━━━━━━━━━━━━━━━━━━━"
@@ -335,8 +333,8 @@ def send_alert_status(message):
         "🔔 **نظام التنبيهات التلقائي (SMC VIP):**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "✅ **الحالة:** مُفعل ويعمل في الخلفية.\n"
-        "⏱️ **معدل الفحص:** فحص فوري عند البدء ثم كل 15 دقيقة تلقائياً.\n"
-        "🎯 **الهدف:** إرسال إشعار فوري عند ملامسة السعر لأوردر بلوك قوي (Demand/Supply) على فريم 15M."
+        "⏱️ **معدل الفحص:** فحص دوري كل 15 دقيقة تلقائياً.\n"
+        "🎯 **الهدف:** إرسال إشعار فوري عند ملامسة السعر لأوردر بلوك قوي (Demand/Supply) على **فريم النصف ساعة (30M)**."
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
