@@ -86,7 +86,7 @@ def fetch_candles_yf(interval='30m', period='5d'):
 
     return pd.DataFrame()
 
-# --- خوارزمية تحليل هيكل السوق الحقيقية (مُعدلة ومُصححة) ---
+# --- خوارزمية تحليل هيكل السوق (المُصححة مع توسيع نطاق الطلب والعرض) ---
 def analyze_timeframe(df, current_price=0):
     if df.empty or len(df) < 5 or current_price == 0:
         return {
@@ -99,7 +99,8 @@ def analyze_timeframe(df, current_price=0):
             "is_sweep": False
         }
 
-    recent_df = df.tail(50).copy()
+    # زيادة النطاق لـ 100 شمعة
+    recent_df = df.tail(100).copy()
     current = current_price if current_price > 0 else recent_df['Close'].iloc[-1]
 
     ema = recent_df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
@@ -116,31 +117,32 @@ def analyze_timeframe(df, current_price=0):
     d_low, d_high = 0, 0
     s_low, s_high = 0, 0
 
-    # 1. البحث عن أقرب Order Block شرائي حقيقي أسفل السعر الحالي مباشرة
-    for i in range(len(recent_df)-2, 1, -1):
-        if recent_df['Close'].iloc[i] < recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] > recent_df['High'].iloc[i]:
-            c_low = round(recent_df['Low'].iloc[i], 1)
-            c_high = round(recent_df['High'].iloc[i], 1)
-            # يجب أن تكون المنطقة أسفل السعر وضمن نطاق منطقي (أقل من 20 دولار)
-            if c_high < current and (current - c_high) <= 20.0:
-                d_low, d_high = c_low, c_high
-                break
+    # 1. البحث عن أقرب Order Block شرائي (توسيع نطاق المسافة إلى 60 دولار بدلاً من 20)
+    for i in range(len(recent_df)-3, 1, -1):
+        # البحث عن شمعة هابطة تلتها حركة صاعدة
+        if recent_df['Close'].iloc[i] < recent_df['Open'].iloc[i]:
+            if recent_df['Close'].iloc[i+1] > recent_df['Open'].iloc[i] or recent_df['Close'].iloc[i+2] > recent_df['High'].iloc[i]:
+                c_low = round(recent_df['Low'].iloc[i], 1)
+                c_high = round(recent_df['High'].iloc[i], 1)
+                if c_high < current and (current - c_high) <= 60.0:
+                    d_low, d_high = c_low, c_high
+                    break
 
-    # 2. البحث عن أقرب Order Block بيعي حقيقي أعلى السعر الحالي مباشرة
-    for i in range(len(recent_df)-2, 1, -1):
-        if recent_df['Close'].iloc[i] > recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] < recent_df['Low'].iloc[i]:
-            c_low = round(recent_df['Low'].iloc[i], 1)
-            c_high = round(recent_df['High'].iloc[i], 1)
-            # يجب أن تكون المنطقة أعلى السعر وضمن نطاق منطقي (أقل من 20 دولار)
-            if c_low > current and (c_low - current) <= 20.0:
-                s_low, s_high = c_low, c_high
-                break
+    # 2. البحث عن أقرب Order Block بيعي (توسيع نطاق المسافة إلى 60 دولار)
+    for i in range(len(recent_df)-3, 1, -1):
+        if recent_df['Close'].iloc[i] > recent_df['Open'].iloc[i]:
+            if recent_df['Close'].iloc[i+1] < recent_df['Open'].iloc[i] or recent_df['Close'].iloc[i+2] < recent_df['Low'].iloc[i]:
+                c_low = round(recent_df['Low'].iloc[i], 1)
+                c_high = round(recent_df['High'].iloc[i], 1)
+                if c_low > current and (c_low - current) <= 60.0:
+                    s_low, s_high = c_low, c_high
+                    break
 
     # 3. صيد السيولة (Liquidity Sweep)
     lowest_recent = recent_df['Low'].tail(15).min()
     is_sweep = True if (current > lowest_recent and recent_df['Low'].iloc[-1] <= lowest_recent) else False
 
-    # 4. التقاط الفجوة السعرية (FVG) النشطة والقريبة فقط
+    # 4. التقاط الفجوة السعرية (FVG)
     fvg_str = "لا توجد ⚪"
     fvg_type = None
     fvg_low, fvg_high = 0, 0
@@ -150,8 +152,7 @@ def analyze_timeframe(df, current_price=0):
         if recent_df['High'].iloc[i-2] < recent_df['Low'].iloc[i]:
             f_low = round(recent_df['High'].iloc[i-2], 1)
             f_high = round(recent_df['Low'].iloc[i], 1)
-            # التأكد من أن الفجوة قريبة من السعر ولم تتجاوزها الشمعات السابقة كثيراً
-            if f_low <= current <= (f_high + 5.0) or abs(current - f_high) <= 10.0:
+            if f_low <= current <= (f_high + 10.0) or abs(current - f_high) <= 20.0:
                 fvg_low, fvg_high = f_low, f_high
                 fvg_type = "BULLISH"
                 fvg_str = f"Bullish FVG 🟢 ({fvg_low} - {fvg_high})"
@@ -161,8 +162,7 @@ def analyze_timeframe(df, current_price=0):
         elif recent_df['Low'].iloc[i-2] > recent_df['High'].iloc[i]:
             f_low = round(recent_df['High'].iloc[i], 1)
             f_high = round(recent_df['Low'].iloc[i-2], 1)
-            # التأكد من أن الفجوة قريبة من السعر
-            if (f_low - 5.0) <= current <= f_high or abs(f_low - current) <= 10.0:
+            if (f_low - 10.0) <= current <= f_high or abs(f_low - current) <= 20.0:
                 fvg_low, fvg_high = f_low, f_high
                 fvg_type = "BEARISH"
                 fvg_str = f"Bearish FVG 🔴 ({fvg_low} - {fvg_high})"
@@ -279,19 +279,16 @@ def auto_alert_loop():
                     alert_type = ""
                     signal_type = ""
 
-                    # 1. التنبيه عند ملامسة منطقة الطلب أو صيد السيولة
                     if (active_tf['demand_high'] > 0 and (active_tf['demand_low'] - 2.0) <= p <= (active_tf['demand_high'] + 3.0)) or active_tf['is_sweep']:
                         is_alert = True
                         alert_type = "🔥 **صفقة شراء VIP (منطقة طلب / صيد سيولة معتمدة)**"
                         signal_type = "BUY"
 
-                    # 2. التنبيه عند ملامسة منطقة العرض
                     elif active_tf['supply_low'] > 0 and (active_tf['supply_low'] - 3.0) <= p <= (active_tf['supply_high'] + 2.0):
                         is_alert = True
                         alert_type = "🔥 **صفقة بيع VIP (ملامسة منطقة العرض معتمدة)**"
                         signal_type = "SELL"
 
-                    # 3. التنبيه عند ملامسة الفجوات السعرية (FVG)
                     elif active_tf['fvg_type'] == "BULLISH" and active_tf['fvg_low'] <= p <= active_tf['fvg_high']:
                         is_alert = True
                         alert_type = "⚡ **صفقة شراء VIP (دخول من الفجوة السعرية Bullish FVG)**"
@@ -302,7 +299,6 @@ def auto_alert_loop():
                         alert_type = "⚡ **صفقة بيع VIP (دخول من الفجوة السعرية Bearish FVG)**"
                         signal_type = "SELL"
 
-                    # 4. التنبيه مع الاتجاه القوي
                     elif "BUY Strong" in res['signal']:
                         is_alert = True
                         alert_type = "⚡ **صفقة شراء استمرارية VIP (توافق اتجاه صاعد قوي)**"
