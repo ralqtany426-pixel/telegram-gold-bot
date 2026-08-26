@@ -144,11 +144,12 @@ def multi_timeframe_scan():
         "15m": tf_15m, "30m": tf_30m, "1h": tf_1h, "4h": tf_4h, "1d": tf_1d
     }
 
-# --- خوارزمية الحساب الاحترافية مع نسبة العائد للمخاطرة (Risk/Reward) ---
+# --- خوارزمية الأهداف: سعر دخول حقيقي مثل MT5 + وقف خسارة محكم واحترافي ---
 def calculate_targets(price, tf30, signal):
     if "BUY" in signal:
-        entry = tf30['demand_high'] if tf30['demand_high'] > 0 else price
-        sl = round(tf30['demand_low'] - 3.0, 2) if tf30['demand_low'] > 0 else round(price - 7.0, 2)
+        entry = price  # السعر اللحظي المطابق للمنصة
+        # وقف خسارة محكم وقريب تحت منطقة الطلب أو السعر بمسافة آمنة ومدروسة
+        sl = round(tf30['demand_low'] - 4.0, 2) if tf30['demand_low'] > 0 else round(entry - 12.0, 2)
         risk = abs(entry - sl)
         tp1 = round(entry + (risk * 1.5), 2)
         tp2 = round(entry + (risk * 2.5), 2)
@@ -156,8 +157,9 @@ def calculate_targets(price, tf30, signal):
         rr_ratio = "1 : 3.5"
         return "BUY 🟢", entry, sl, tp1, tp2, tp3, rr_ratio
     else:
-        entry = tf30['supply_low'] if tf30['supply_low'] > 0 else price
-        sl = round(tf30['supply_high'] + 3.0, 2) if tf30['supply_high'] > 0 else round(price + 7.0, 2)
+        entry = price  # السعر اللحظي المطابق للمنصة
+        # وقف خسارة محكم وقريب فوق قمة العرض أو السعر بمسافة آمنة ومدروسة (احترافي تماماً)
+        sl = round(tf30['supply_high'] + 4.0, 2) if tf30['supply_high'] > 0 else round(entry + 12.0, 2)
         risk = abs(sl - entry)
         tp1 = round(entry - (risk * 1.5), 2)
         tp2 = round(entry - (risk * 2.5), 2)
@@ -322,6 +324,6 @@ if __name__ == '__main__':
         webhook_url = f"https://{render_url}/{TOKEN}"
         bot.set_webhook(url=webhook_url)
         print(f"Webhook successfully set to: {webhook_url}")
-        
+
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
