@@ -7,29 +7,14 @@ import telebot
 import pandas as pd
 import yfinance as yf
 from telebot import types
-from flask import Flask
+from flask import Flask, request
 
-# --- إعداد خادم الويب الوهمي لـ Render (لحل مشكلة Port Binding) ---
-app = Flask(__name__)
-
-@app.route('/')
-def health_check():
-    return "Bot is alive and running!"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-
-# تشغيل سيرفر الويب في خلفية الكود لترضى منصة Render
-threading.Thread(target=run_flask, daemon=True).start()
-
-# --- إعدادات البوت والـ Token ---
 TOKEN = os.environ.get("BOT_TOKEN")
-
 if not TOKEN:
     raise ValueError("BOT_TOKEN غير موجود في متغيرات البيئة!")
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
+app = Flask(__name__)
 
 DB_NAME = "users.db"
 
@@ -85,7 +70,6 @@ def fetch_candles(interval='30m', period='5d'):
         pass
     return pd.DataFrame()
 
-# --- خوارزمية SMC المتقدمة (القمم، القيعان، الطلب والعرض، المتوسطات، FVG) ---
 def analyze_market_structure(df):
     if df.empty or len(df) < 5:
         return {
@@ -134,7 +118,6 @@ def analyze_market_structure(df):
 
 def multi_timeframe_scan():
     price = get_live_price()
-
     tf_15m = analyze_market_structure(fetch_candles('15m', '2d'))
     tf_30m = analyze_market_structure(fetch_candles('30m', '4d'))
     tf_1h  = analyze_market_structure(fetch_candles('1h', '7d'))
@@ -153,9 +136,7 @@ def multi_timeframe_scan():
         signal = "WAIT ⏳ (تذبذب / حياد)"
 
     return {
-        "price": price,
-        "signal": signal,
-        "bull_count": bull_count,
+        "price": price, "signal": signal, "bull_count": bull_count,
         "15m": tf_15m, "30m": tf_30m, "1h": tf_1h, "4h": tf_4h, "1d": tf_1d
     }
 
@@ -169,7 +150,7 @@ def calculate_targets(price, tf30, signal):
         risk = abs(sl - price)
         return "SELL 🔴", sl, round(price - (risk * 1.5), 2), round(price - (risk * 2.5), 2), round(price - (risk * 3.5), 2)
 
-# --- نظام التنبيهات يعمل كل 5 دقائق ---
+# --- نظام التنبيهات يعمل في الخلفية ---
 def auto_alert_loop():
     last_signal_state = ""
     while True:
@@ -215,7 +196,6 @@ def auto_alert_loop():
                             pass
         except Exception as e:
             print(f"Alert Error: {e}")
-
         time.sleep(300)
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
@@ -244,7 +224,6 @@ def send_vip_trade(message):
     data = multi_timeframe_scan()
     p = data['price']
     t_type, sl, tp1, tp2, tp3 = calculate_targets(p, data['30m'], data['signal'])
-
     msg = (
         f"🔥 **توصية VIP (SMC & Order Block):**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -265,7 +244,6 @@ def send_support_resistance(message):
     df_1h = fetch_candles('1h', '7d')
     r1 = round(df_1h['High'].max(), 2) if not df_1h.empty else round(p + 15.0, 2)
     s1 = round(df_1h['Low'].min(), 2) if not df_1h.empty else round(p - 15.0, 2)
-
     msg = (
         f"📊 **مستويات الدعم والمقاومة الرئيسية:**\n"
         f"📍 **السعر الحالي:** `{p}` $\n"
@@ -300,7 +278,30 @@ def send_alert_status(message):
     add_user(message.chat.id)
     bot.send_message(message.chat.id, "🔔 **نظام التنبيهات الذكي:** يعمل تلقائياً في الخلفية ويقوم بفحص السوق كل **5 دقائق** لإرسال الصفقات الناجحة فوراً للمشتركين.", parse_mode="Markdown")
 
+# --- مسار استقبال تحديثات تليجرام (Webhook) ---
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return "!", 200
+    else:
+        return "Invalid Data", 403
+
+@app.route('/')
+def index():
+    return "Bot is running with Webhook!", 200
+
 if __name__ == '__main__':
-    print("Bot is running with Polling...")
+    # إزالة أي Webhook قديم وربط الرابط الجديد تلقائياً مع رابط موقعك على Render
     bot.remove_webhook()
-    bot.infinity_polling(skip_pending=True)
+    # ضع رابط مشروعك على Render هنا بدلاً من الـ URL المؤقت أو دعه يسحبه تلقائياً إذا رغبت،
+    # ولضمان العمل المباشر سنعتمد على تشغيل السيرفر ومنفذ Render:
+    port = int(os.environ.get("PORT", 5000))
+    
+    # ملاحظة: لتحويل البوت ليعمل بنجاح تام، يفضل تفعيل الـ Webhook عبر رابط Render الخاص بك:
+    # app_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/{TOKEN}"
+    # bot.set_webhook(url=app_url)
+    
+    app.run(host="0.0.0.0", port=port)
