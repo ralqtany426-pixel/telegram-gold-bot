@@ -238,7 +238,7 @@ def calculate_trade_targets(price, tf30, signal_type):
         # تحجيم الاستوب بحيث يكون منطقياً ولا يتجاوز 6.0$ من سعر الدخول
         sl_raw = tf30['demand_low'] - 2.5 if tf30['demand_low'] > 0 else price - 5.0
         sl = round(max(sl_raw, price - 6.0), 2)
-        
+
         risk = abs(price - sl) if abs(price - sl) >= 1.5 else 4.0
         tp1 = round(price + (risk * 1.5), 2)
         tp2 = round(price + (risk * 2.5), 2)
@@ -248,14 +248,14 @@ def calculate_trade_targets(price, tf30, signal_type):
         # تحجيم الاستوب لصفقات البيع بحيث لا يتجاوز 6.0$ فوق سعر الدخول
         sl_raw = tf30['supply_high'] + 2.5 if tf30['supply_high'] > 0 else price + 5.0
         sl = round(min(sl_raw, price + 6.0), 2)
-        
+
         risk = abs(sl - price) if abs(sl - price) >= 1.5 else 4.0
         tp1 = round(price - (risk * 1.5), 2)
         tp2 = round(price - (risk * 2.5), 2)
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- منبه الصفقات المطور ---
+# --- منبه الصفقات المطور المتوازن ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
@@ -271,19 +271,19 @@ def auto_alert_loop():
                     alert_type = ""
                     signal_type = "WAIT"
 
-                    # 1. شرط شراء مرن (ملامسة الطلب أو كسر كاذب Liquidity Sweep)
-                    if (tf30['demand_low'] > 0 and (tf30['demand_low'] - 3.0) <= p <= (tf30['demand_high'] + 2.0)) or tf30['is_sweep']:
+                    # 1. شرط شراء VIP معدل (منطقة الطلب / صيد السيولة)
+                    if (tf30['demand_high'] > 0 and (tf30['demand_low'] - 2.0) <= p <= (tf30['demand_high'] + 4.0)) or tf30['is_sweep']:
                         is_alert = True
                         alert_type = "🔥 **صفقة شراء VIP (منطقة طلب / صيد سيولة 30M)**"
                         signal_type = "BUY"
 
-                    # 2. شرط بيع مرن (ملامسة منطقة العرض)
-                    elif tf30['supply_high'] > 0 and (tf30['supply_low'] - 2.0) <= p <= (tf30['supply_high'] + 3.0):
+                    # 2. شرط بيع VIP معدل (منطقة العرض)
+                    elif tf30['supply_low'] > 0 and (tf30['supply_low'] - 4.0) <= p <= (tf30['supply_high'] + 2.0):
                         is_alert = True
                         alert_type = "🔥 **صفقة بيع VIP (ملامسة منطقة العرض 30M)**"
                         signal_type = "SELL"
 
-                    # 3. إحاطة إضافية: بيع استمراري عند الهبوط القوي والزخم الحاد دون انتظر العرض
+                    # 3. إحاطة إضافية: بيع استمراري عند الهبوط القوي والزخم الحاد
                     elif "SELL Strong" in res['signal'] and ("BEARISH" in tf30['trend'] or "Bearish FVG" in tf30['fvg']):
                         is_alert = True
                         alert_type = "⚡ **صفقة بيع استمرارية VIP (توافق هابط قوي / كسر هيكل 30M)**"
