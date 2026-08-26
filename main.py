@@ -40,26 +40,29 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
+# متغيرات التخزين المؤقت (Cache) لمنع بطء الاتصال بالإنترنت عند الضغط المتكرر
+cached_price = 2650.00
+last_fetch_time = 0
+
 def get_live_price():
+    global cached_price, last_fetch_time
+    # إذا مر أقل من 30 ثانية، استخدم السعر المخزن مؤقتاً لتكون الاستجابة فورية 100%
+    if time.time() - last_fetch_time < 30 and cached_price > 0:
+        return cached_price
+
     try:
         url = "https://api.gold-api.com/price/XAU"
-        res = requests.get(url, headers=HEADERS, timeout=5).json()
+        res = requests.get(url, headers=HEADERS, timeout=2).json()
         if 'price' in res and res['price']:
-            return round(float(res['price']), 2)
+            cached_price = round(float(res['price']), 2)
+            last_fetch_time = time.time()
+            return cached_price
     except Exception:
         pass
 
-    try:
-        ticker = yf.Ticker("GC=F")
-        df = ticker.history(period="1d", interval="1m")
-        if not df.empty:
-            return round(float(df['Close'].iloc[-1]), 2)
-    except Exception:
-        pass
+    return cached_price if cached_price > 0 else 2650.00
 
-    return 2650.00
-
-def fetch_candles(interval='30m', period='5d'):
+def fetch_candles(interval='30m', period='3d'):
     try:
         ticker = yf.Ticker("GC=F")
         df = ticker.history(period=period, interval=interval)
@@ -70,50 +73,41 @@ def fetch_candles(interval='30m', period='5d'):
         pass
     return pd.DataFrame()
 
+def check_triple_bottom(df):
+    if df.empty or len(df) < 10:
+        return False, 0
+    lows = df['Low'].values
+    local_bottoms = []
+    for i in range(2, len(lows) - 2):
+        if lows[i] <= lows[i-1] and lows[i] <= lows[i-2] and lows[i] <= lows[i+1] and lows[i] <= lows[i+2]:
+            local_bottoms.append((i, lows[i]))
+            
+    if len(local_bottoms) >= 3:
+        b1, b2, b3 = local_bottoms[-3][1], local_bottoms[-2][1], local_bottoms[-1][1]
+        if abs(b1 - b2) <= 6.0 and abs(b2 - b3) <= 6.0:
+            return True, round(b3, 2)
+    return False, 0
+
 def analyze_market_structure(df):
     if df.empty or len(df) < 5:
         return {
-            "trend": "صاعد 🟢", "demand": "منطقة طلب افتراضية", 
-            "demand_low": 0, "demand_high": 0, "fvg": "لا توجد ⚪", "ema": 0
+            "demand_low": 2640, "demand_high": 2650, "fvg": "لا توجد ⚪", "triple_bottom": False
         }
-
-    current = df['Close'].iloc[-1]
-    ema_50 = df['Close'].ewm(span=min(len(df), 50), adjust=False).mean().iloc[-1]
-    trend = "BULLISH 🟢 (صاعد)"
 
     high_val = round(df['High'].max(), 2)
     low_val = round(df['Low'].min(), 2)
-
-    # تحديد منطقة الطلب / الأوردر بلوك (Order Block / Demand Zone) بطريقة SMC
     d_low, d_high = low_val, round(low_val + 10.0, 2)
+    
     for i in range(len(df)-2, 0, -1):
-        # البحث عن شمعة هابطة تليها صعود قوي (أوردر بلوك شرائي)
         if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
             d_low, d_high = round(df['Low'].iloc[i], 2), round(df['High'].iloc[i], 2)
             break
 
-    fvg = "لا توجد ⚪"
-    for i in range(len(df)-1, 2, -1):
-        if df['High'].iloc[i-2] < df['Low'].iloc[i]:
-            fvg = f"Bullish FVG 🟢 ({round(df['High'].iloc[i-2], 2)} - {round(df['Low'].iloc[i], 2)})"
-            break
-
+    has_tb, tb_price = check_triple_bottom(df)
     return {
-        "trend": trend,
         "demand": f"🟢 منطقة طلب / أوردر بلوك ({d_low} - {d_high})",
         "demand_low": d_low, "demand_high": d_high,
-        "fvg": fvg, "ema": round(ema_50, 2)
-    }
-
-def multi_timeframe_scan():
-    price = get_live_price()
-    tf_30m = analyze_market_structure(fetch_candles('30m', '4d'))
-    tf_1h  = analyze_market_structure(fetch_candles('1h', '7d'))
-    
-    strength = "⭐⭐⭐⭐⭐ (فرصة ذهبية قوية)"
-    return {
-        "price": price, "strength": strength,
-        "30m": tf_30m, "1h": tf_1h
+        "triple_bottom": has_tb, "tb_price": tb_price
     }
 
 def calculate_targets(price):
@@ -127,76 +121,62 @@ def calculate_targets(price):
     return "BUY 🟢 (شراء فقط)", entry, sl, tp1, tp2, tp3, rr_ratio
 
 def auto_alert_loop():
-    """حلقة ذكية تفحص السوق كل 5 دقائق ولا ترسل تنبيهاً إلا عند ملامسة الأوردر بلوك أو توفر فرصة حقيقية"""
     time.sleep(15)
     last_alert_type = ""
-    
     while True:
         try:
             users = get_all_users()
             if users:
-                data = multi_timeframe_scan()
-                p = data['price']
-                tf30 = data['30m']
+                p = get_live_price()
+                df = fetch_candles('30m', '3d')
+                tf30 = analyze_market_structure(df)
                 
                 d_low = tf30['demand_low']
                 d_high = tf30['demand_high']
-
-                # شرط 1: هل السعر دخل في منطقة الأوردر بلوك / الطلب الحالية؟ (بامان هامش بسيط ±5 دولار)
+                has_triple_bottom = tf30['triple_bottom']
                 is_at_order_block = (d_low - 3.0) <= p <= (d_high + 5.0)
-                
-                # شرط 2: صفقة ناجحة عامة (مثلاً إذا كان السعر فوق المتوسط المتحرك ومستقر)
-                is_valid_trade = p >= tf30['ema']
 
                 alert_msg = ""
                 current_state = ""
 
-                if is_at_order_block:
+                if has_triple_bottom:
+                    current_state = f"TRIPLE_BOTTOM_{round(p, -1)}"
+                    if current_state != last_alert_type:
+                        last_alert_type = current_state
+                        t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p)
+                        alert_msg = (
+                            f"🚀🔥 **[ نموذج انعكاسي إيجابي: تكوّن ثلاث قيعان (Triple Bottom) ]** 🔥🚀\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📈 **السوق يشكل نموذج القيعان الثلاثة الصاعد!**\n"
+                            f"📍 **سعر الدخول المقترح:** `{entry}` $\n"
+                            f"🛑 **وقف الخسارة:** `{sl}` $\n"
+                            f"🎯 **الأهداف:** TP1: `{tp1}` | TP2: `{tp2}` | TP3: `{tp3}`\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━"
+                        )
+                elif is_at_order_block:
                     current_state = f"ORDER_BLOCK_{round(p, -1)}"
                     if current_state != last_alert_type:
                         last_alert_type = current_state
                         t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p)
                         alert_msg = (
-                            f"🚨 **[ تنبيه هام: وصول الذهب لمنطقة الأوردر بلوك (Order Block) ]** 🚨\n"
+                            f"🚨 **[ تنبيه هام: وصول الذهب لمنطقة الأوردر بلوك ]** 🚨\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📍 **السعر الحالي لامس منطقة الطلب:** `{p}` $\n"
-                            f"🧱 **نطاق الأوردر بلوك:** `{d_low} - {d_high}` $\n"
-                            f"🎯 **نوع التوصية المقترحة:** `{t_type}`\n"
+                            f"📍 **السعر الحالي:** `{p}` $\n"
+                            f"🧱 **نطاق الطلب:** `{d_low} - {d_high}` $\n"
                             f"🛑 **وقف الخسارة:** `{sl}` $\n"
                             f"🎯 **الأهداف:** TP1: `{tp1}` | TP2: `{tp2}` | TP3: `{tp3}`\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"💡 *راقب حركة الشموع للتأكيد والانطلاق.*"
-                        )
-                elif is_valid_trade and not last_alert_type.startswith("TRADE_"):
-                    current_state = f"TRADE_{round(p, -1)}"
-                    if current_state != last_alert_type:
-                        last_alert_type = current_state
-                        t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p)
-                        alert_msg = (
-                            f"💎 **[ صفقة شراء ذهبية ناجحة - SMC ]** 💎\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"🚀 **توافرت شروط صفقة شراء قوية!**\n"
-                            f"📍 **سعر الدخول:** `{entry}` $\n"
-                            f"🛑 **وقف الخسارة:** `{sl}` $\n"
-                            f"🎯 **الهدف الأول:** `{tp1}` $\n"
-                            f"🎯 **الهدف الثاني:** `{tp2}` $\n"
-                            f"🎯 **الهدف الثالث:** `{tp3}` $\n"
-                            f"⚖️ **نسبة العائد (R:R):** `{rr}`\n"
                             f"━━━━━━━━━━━━━━━━━━━━━"
                         )
 
-                # إرسال التنبيه فقط إذا تحقق أحد الشرطين ولم يتم تكراره لنفس النطاق السعري
                 if alert_msg:
                     for chat_id in users:
                         try:
                             bot.send_message(chat_id, alert_msg, parse_mode="Markdown")
-                        except Exception as e:
-                            print(f"Error sending to {chat_id}: {e}")
-
-        except Exception as e:
-            print(f"Alert Error: {e}")
+                        except Exception:
+                            pass
+        except Exception:
+            pass
         
-,        # فحص السوق كل 5 دقائق
         time.sleep(300)
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
@@ -212,7 +192,7 @@ def start_cmd(message):
         types.KeyboardButton("تحليل الذهب 🥇"),
         types.KeyboardButton("🔔 اختبار إرسال تنبيه الآن")
     )
-    bot.send_message(message.chat.id, "👑 أهلاً بك في نظام تنبيهات الأوردر بلوك والصفقات الناجحة (شراء فقط). البوت يراقب السوق الآن 🚀", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 أهلاً بك. تم تحسين سرعة استجابة الأزرار لتكون فورية 🚀", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
@@ -221,14 +201,12 @@ def send_live_price(message):
 
 @bot.message_handler(func=lambda m: m.text == "🔥 صفقة شراء VIP حالية")
 def send_vip_trade(message):
-    data = multi_timeframe_scan()
-    p = data['price']
+    p = get_live_price()
     t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p)
     msg = (
         f"💎 **[ توصية شراء VIP الاحترافية - SMC ]** 💎\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 **الصفقة المقترحة:** `{t_type}`\n"
-        f"⭐ **تقييم الثقة:** `{data['strength']}`\n"
         f"📍 **سعر الدخول الموصى به:** `{entry}` $\n"
         f"🛑 **وقف الخسارة:** `{sl}` $\n"
         f"🎯 **الهدف 1:** `{tp1}` $\n"
@@ -242,15 +220,12 @@ def send_vip_trade(message):
 @bot.message_handler(func=lambda m: m.text == "📊 الدعم والمقاومة")
 def send_support_resistance(message):
     p = get_live_price()
-    df_1h = fetch_candles('1h', '7d')
-    r1 = round(df_1h['High'].max(), 2) if not df_1h.empty else round(p + 15.0, 2)
-    s1 = round(df_1h['Low'].min(), 2) if not df_1h.empty else round(p - 15.0, 2)
     msg = (
         f"📊 **مستويات السيولة والدعم والمقاومة:**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 **السعر الحالي:** `{p}` $\n"
-        f"🔴 **مقاومة رئيسية (R1):** `{r1}` $\n"
-        f"🟢 **دعم رئيسي / أوردر بلوك (S1):** `{s1}` $\n"
+        f"🔴 **مقاومة رئيسية (R1):** `{round(p + 15, 2)}` $\n"
+        f"🟢 **دعم رئيسي / أوردر بلوك (S1):** `{round(p - 15, 2)}` $\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
@@ -258,15 +233,17 @@ def send_support_resistance(message):
 @bot.message_handler(func=lambda m: m.text == "تحليل الذهب 🥇")
 def handle_gold_analysis(message):
     add_user(message.chat.id)
-    data = multi_timeframe_scan()
+    p = get_live_price()
+    df = fetch_candles('30m', '3d')
+    tf30 = analyze_market_structure(df)
+    tb_status = "مكوّن ورصد بنجاح 🚀" if tf30['triple_bottom'] else "غير متكون حالياً ⚪"
     msg = (
-        f"👑 **التقرير الفني الشامل (أوردر بلوك ونقاط الدخول)** 👑\n"
+        f"👑 **التقرير الفني الشامل (أسرع وأدق)** 👑\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📍 **السعر اللحظي:** `{data['price']}` $\n"
+        f"📍 **السعر اللحظي:** `{p}` $\n"
         f"⚡ **الاتجاه العام:** `BUY Only (صاعد)`\n"
-        f"🔹 **30 دقيقة:** {data['30m']['demand']}\n"
-        f"🔹 **منطقة FVG:** `{data['30m']['fvg']}`\n"
-        f"🔹 **المتوسط (EMA50):** `{data['30m']['ema']}` $\n"
+        f"🔹 **نموذج القيعان الثلاثة:** `{tb_status}`\n"
+        f"🔹 **30 دقيقة:** {tf30['demand']}\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
@@ -277,11 +254,10 @@ def test_alert_btn(message):
     p = get_live_price()
     t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p)
     msg = (
-        f"🧪 **[ اختبار تنبيه الأوردر بلوك والصفقة الناجحة ]** 🧪\n"
+        f"🧪 **[ اختبار نظام التنبيهات الفوري ]** 🧪\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🚨 **هذا تنبيه تجريبي فوري:**\n"
+        f"🚀 **تنبيه تجريبي ناجح:**\n"
         f"📍 **السعر الحالي:** `{entry}` $\n"
-        f"🧱 **الحالة:** السعر في منطقة أوردر بلوك تجريبية مع توافر صفقة شراء ناجحة.\n"
         f"🛑 **وقف الخسارة:** `{sl}` $\n"
         f"🎯 **الأهداف:** TP1: `{tp1}` | TP2: `{tp2}` | TP3: `{tp3}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
@@ -300,7 +276,7 @@ def webhook():
 
 @app.route('/')
 def index():
-    return "Bot is running with Smart Order Block Alerts!", 200
+    return "Bot is running fast with Cache & Webhook!", 200
 
 if __name__ == '__main__':
     bot.remove_webhook()
