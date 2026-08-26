@@ -232,18 +232,24 @@ def scan_multi_timeframe_smc():
         "signal": signal
     }
 
-# --- حساب الأهداف بناءً على فريم 30M ---
+# --- حساب الأهداف بناءً على فريم 30M (تم التعديل لضبط إدارة المخاطر بدقة) ---
 def calculate_trade_targets(price, tf30, signal_type):
     if "BUY" in signal_type:
-        sl = round(tf30['demand_low'] - 2.5, 2) if tf30['demand_low'] > 0 else round(price - 5.0, 2)
-        risk = abs(price - sl) if abs(price - sl) > 1.0 else 4.0
+        # تحجيم الاستوب بحيث يكون منطقياً ولا يتجاوز 6.0$ من سعر الدخول
+        sl_raw = tf30['demand_low'] - 2.5 if tf30['demand_low'] > 0 else price - 5.0
+        sl = round(max(sl_raw, price - 6.0), 2)
+        
+        risk = abs(price - sl) if abs(price - sl) >= 1.5 else 4.0
         tp1 = round(price + (risk * 1.5), 2)
         tp2 = round(price + (risk * 2.5), 2)
         tp3 = round(price + (risk * 3.5), 2)
         return "BUY 🟢", sl, tp1, tp2, tp3
     else:
-        sl = round(tf30['supply_high'] + 2.5, 2) if tf30['supply_high'] > 0 else round(price + 5.0, 2)
-        risk = abs(sl - price) if abs(sl - price) > 1.0 else 4.0
+        # تحجيم الاستوب لصفقات البيع بحيث لا يتجاوز 6.0$ فوق سعر الدخول
+        sl_raw = tf30['supply_high'] + 2.5 if tf30['supply_high'] > 0 else price + 5.0
+        sl = round(min(sl_raw, price + 6.0), 2)
+        
+        risk = abs(sl - price) if abs(sl - price) >= 1.5 else 4.0
         tp1 = round(price - (risk * 1.5), 2)
         tp2 = round(price - (risk * 2.5), 2)
         tp3 = round(price - (risk * 3.5), 2)
