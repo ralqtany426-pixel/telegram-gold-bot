@@ -1,4 +1,5 @@
 pyTelegramBotAPI
+requests
 pandas
 yfinance
-requests
+flask
