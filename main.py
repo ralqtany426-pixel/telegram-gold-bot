@@ -303,7 +303,6 @@ def auto_alert_loop():
                     alert_type = ""
                     signal_type = ""
 
-                    # أولوية الفلترة: اختيار إشارة واحدة فقط بناءً على توافق الاتجاه العام لعدم التضارب
                     trend_1d_bullish = "BULLISH" in res['1d']['trend']
 
                     if res.get('quick_15m'):
@@ -331,7 +330,6 @@ def auto_alert_loop():
                         alert_type = "⚡ **صفقة بيع استمرارية VIP (توافق اتجاه هابط قوي)**"
                         signal_type = "SELL"
 
-                    # شرط منع التكرار وإرسال الإشارات المتعارضة بنفس اللحظة
                     distance_from_last = abs(p - last_alert_price)
                     if is_alert and (signal_type != last_signal_type or distance_from_last >= 5.0):
                         last_alert_price = p
