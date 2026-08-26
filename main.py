@@ -86,7 +86,7 @@ def fetch_candles_yf(interval='30m', period='5d'):
 
     return pd.DataFrame()
 
-# --- خوارزمية تحليل هيكل السوق الحقيقية ---
+# --- خوارزمية تحليل هيكل السوق الحقيقية (مُعدلة ومُصححة) ---
 def analyze_timeframe(df, current_price=0):
     if df.empty or len(df) < 5 or current_price == 0:
         return {
@@ -116,61 +116,57 @@ def analyze_timeframe(df, current_price=0):
     d_low, d_high = 0, 0
     s_low, s_high = 0, 0
 
-    # توسيع نطاق البحث عن Order Block شرائي حقيقي
+    # 1. البحث عن أقرب Order Block شرائي حقيقي أسفل السعر الحالي مباشرة
     for i in range(len(recent_df)-2, 1, -1):
         if recent_df['Close'].iloc[i] < recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] > recent_df['High'].iloc[i]:
             c_low = round(recent_df['Low'].iloc[i], 1)
             c_high = round(recent_df['High'].iloc[i], 1)
-            if c_high <= current + 15.0 and c_low < current:
+            # يجب أن تكون المنطقة أسفل السعر وضمن نطاق منطقي (أقل من 20 دولار)
+            if c_high < current and (current - c_high) <= 20.0:
                 d_low, d_high = c_low, c_high
                 break
 
-    # توسيع نطاق البحث عن Order Block بيعي حقيقي
+    # 2. البحث عن أقرب Order Block بيعي حقيقي أعلى السعر الحالي مباشرة
     for i in range(len(recent_df)-2, 1, -1):
         if recent_df['Close'].iloc[i] > recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] < recent_df['Low'].iloc[i]:
             c_low = round(recent_df['Low'].iloc[i], 1)
             c_high = round(recent_df['High'].iloc[i], 1)
-            if c_low >= current - 15.0 and c_high > current:
+            # يجب أن تكون المنطقة أعلى السعر وضمن نطاق منطقي (أقل من 20 دولار)
+            if c_low > current and (c_low - current) <= 20.0:
                 s_low, s_high = c_low, c_high
                 break
 
-    if d_low == 0:
-        s_lows = recent_df['Low'].tail(25)
-        valid_lows = s_lows[s_lows < current]
-        if not valid_lows.empty:
-            d_low = round(valid_lows.min(), 1)
-            d_high = round(d_low + 4.0, 1)
-
-    if s_low == 0:
-        s_highs = recent_df['High'].tail(25)
-        valid_highs = s_highs[s_highs > current]
-        if not valid_highs.empty:
-            s_high = round(valid_highs.max(), 1)
-            s_low = round(s_high - 4.0, 1)
-
-    # صيد السيولة (Liquidity Sweep)
+    # 3. صيد السيولة (Liquidity Sweep)
     lowest_recent = recent_df['Low'].tail(15).min()
-    is_sweep = False
-    if current > lowest_recent and recent_df['Low'].iloc[-1] <= lowest_recent:
-        is_sweep = True
+    is_sweep = True if (current > lowest_recent and recent_df['Low'].iloc[-1] <= lowest_recent) else False
 
-    # FVG تفصيلي لاستخدامه في التنبيهات
+    # 4. التقاط الفجوة السعرية (FVG) النشطة والقريبة فقط
     fvg_str = "لا توجد ⚪"
     fvg_type = None
     fvg_low, fvg_high = 0, 0
+
     for i in range(len(recent_df)-1, 2, -1):
+        # Bullish FVG
         if recent_df['High'].iloc[i-2] < recent_df['Low'].iloc[i]:
-            fvg_low = round(recent_df['High'].iloc[i-2], 1)
-            fvg_high = round(recent_df['Low'].iloc[i], 1)
-            fvg_type = "BULLISH"
-            fvg_str = f"Bullish FVG 🟢 ({fvg_low} - {fvg_high})"
-            break
+            f_low = round(recent_df['High'].iloc[i-2], 1)
+            f_high = round(recent_df['Low'].iloc[i], 1)
+            # التأكد من أن الفجوة قريبة من السعر ولم تتجاوزها الشمعات السابقة كثيراً
+            if f_low <= current <= (f_high + 5.0) or abs(current - f_high) <= 10.0:
+                fvg_low, fvg_high = f_low, f_high
+                fvg_type = "BULLISH"
+                fvg_str = f"Bullish FVG 🟢 ({fvg_low} - {fvg_high})"
+                break
+
+        # Bearish FVG
         elif recent_df['Low'].iloc[i-2] > recent_df['High'].iloc[i]:
-            fvg_low = round(recent_df['High'].iloc[i], 1)
-            fvg_high = round(recent_df['Low'].iloc[i-2], 1)
-            fvg_type = "BEARISH"
-            fvg_str = f"Bearish FVG 🔴 ({fvg_low} - {fvg_high})"
-            break
+            f_low = round(recent_df['High'].iloc[i], 1)
+            f_high = round(recent_df['Low'].iloc[i-2], 1)
+            # التأكد من أن الفجوة قريبة من السعر
+            if (f_low - 5.0) <= current <= f_high or abs(f_low - current) <= 10.0:
+                fvg_low, fvg_high = f_low, f_high
+                fvg_type = "BEARISH"
+                fvg_str = f"Bearish FVG 🔴 ({fvg_low} - {fvg_high})"
+                break
 
     demand_str = f"🟢 Demand ({d_low} - {d_high})" if d_low > 0 else "غير محددة ⚪"
     supply_str = f"🔴 Supply ({s_low} - {s_high})" if s_low > 0 else "غير محددة ⚪"
@@ -261,7 +257,7 @@ def calculate_trade_targets(price, active_tf, signal_type):
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- حلقة التنبيهات التلقائية المحدثة والمصحيحة ---
+# --- حلقة التنبيهات التلقائية ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
@@ -272,7 +268,6 @@ def auto_alert_loop():
                 if res:
                     p = res['price']
 
-                    # التبديل التلقائي للفريم المناسب
                     active_tf = res['30m']
                     if active_tf['demand_low'] == 0 and active_tf['supply_low'] == 0:
                         if res['15m']['demand_low'] > 0 or res['15m']['supply_low'] > 0:
