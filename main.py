@@ -288,9 +288,11 @@ def calculate_trade_targets(price, active_tf, signal_type):
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- حلقة التنبيهات التلقائية ---
+# --- حلقة التنبيهات التلقائية (مع فلتر مسافة الأمان 5 دولار) ---
 def auto_alert_loop():
-    last_alert_key = ""
+    last_alert_price = 0.0
+    last_signal_type = ""
+    
     while True:
         try:
             users = get_all_users()
@@ -340,10 +342,12 @@ def auto_alert_loop():
                         alert_type = "⚡ **صفقة بيع استمرارية VIP (توافق اتجاه هابط قوي)**"
                         signal_type = "SELL"
 
-                    current_key = f"{signal_type}_{round(p, 0)}"
-
-                    if is_alert and current_key != last_alert_key:
-                        last_alert_key = current_key
+                    # شرط منع التكرار: يرسل التنبيه إذا وجد تنبيه جديد، و بشرط أن يكون النوع تغير أو تحرك السعر بمسافة 5 دولار على الأقل
+                    distance_from_last = abs(p - last_alert_price)
+                    if is_alert and (signal_type != last_signal_type or distance_from_last >= 5.0):
+                        last_alert_price = p
+                        last_signal_type = signal_type
+                        
                         trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, signal_type)
 
                         alert_msg = (
@@ -381,7 +385,7 @@ def start_cmd(message):
     btn_alerts = types.KeyboardButton("🔔 حالة التنبيهات")
     markup.add(btn_live, btn_vip, btn_sr, btn_gold, btn_alerts)
 
-    bot.send_message(message.chat.id, "مرحباً بك! تم دمج ميزة قنص الفرص السريعة مع حماية الاتجاه بنجاح ⚡", reply_markup=markup)
+    bot.send_message(message.chat.id, "مرحباً بك! تم تفعيل فلتر المسافة السعرية بنجاح ⚡", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
@@ -507,9 +511,9 @@ def send_alert_status(message):
     msg = (
         "🔔 **نظام التنبيهات التلقائي (SMC VIP):**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ **الحالة:** مُفعل ويعمل بدقة (مع فليتر الزخم السريع).\n"
+        "✅ **الحالة:** مُفعل (مع فلتر مسافة 5$ لعدم التكرار).\n"
         "⏱️ **معدل الفحص:** كل 20 ثانية.\n"
-        "🎯 **الهدف:** الطلب، العرض، صيد السيولة، و FVG، وقنص الحركات السريعة."
+        "🎯 **الهدف:** الطلب، العرض، صيد السيولة، FVG، والحركات السريعة."
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
