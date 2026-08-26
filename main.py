@@ -121,7 +121,7 @@ def analyze_timeframe(df, current_price=0):
         if recent_df['Close'].iloc[i] < recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] > recent_df['High'].iloc[i]:
             c_low = round(recent_df['Low'].iloc[i], 1)
             c_high = round(recent_df['High'].iloc[i], 1)
-            if c_high <= current + 5.0 and c_low < current:
+            if c_high <= current + 8.0 and c_low < current:
                 d_low, d_high = c_low, c_high
                 break
 
@@ -130,27 +130,27 @@ def analyze_timeframe(df, current_price=0):
         if recent_df['Close'].iloc[i] > recent_df['Open'].iloc[i] and recent_df['Close'].iloc[i+1] < recent_df['Low'].iloc[i]:
             c_low = round(recent_df['Low'].iloc[i], 1)
             c_high = round(recent_df['High'].iloc[i], 1)
-            if c_low >= current - 5.0 and c_high > current:
+            if c_low >= current - 8.0 and c_high > current:
                 s_low, s_high = c_low, c_high
                 break
 
-    # إذا لم يجد أوردر بلوك، الاعتماد على الدعم والمقاومة الحقيقية للشمعات السابقة وليس معادلات وهمية
+    # إذا لم يجد أوردر بلوك، الاعتماد على الدعم والمقاومة الحقيقية للشمعات السابقة
     if d_low == 0:
-        s_lows = recent_df['Low'].tail(15)
+        s_lows = recent_df['Low'].tail(20)
         valid_lows = s_lows[s_lows < current]
         if not valid_lows.empty:
             d_low = round(valid_lows.min(), 1)
-            d_high = round(d_low + 2.5, 1)
+            d_high = round(d_low + 3.5, 1)
 
     if s_low == 0:
-        s_highs = recent_df['High'].tail(15)
+        s_highs = recent_df['High'].tail(20)
         valid_highs = s_highs[s_highs > current]
         if not valid_highs.empty:
             s_high = round(valid_highs.max(), 1)
-            s_low = round(s_high - 2.5, 1)
+            s_low = round(s_high - 3.5, 1)
 
     # اكتشاف صيد السيولة (Liquidity Sweep)
-    lowest_recent = recent_df['Low'].tail(10).min()
+    lowest_recent = recent_df['Low'].tail(12).min()
     is_sweep = False
     if current > lowest_recent and recent_df['Low'].iloc[-1] <= lowest_recent:
         is_sweep = True
@@ -180,7 +180,7 @@ def analyze_timeframe(df, current_price=0):
         "is_sweep": is_sweep
     }
 
-# --- الفحص متعدد الفريمات المعدل (تم تصحيح جلب وتجميع فريم 4 ساعات) ---
+# --- الفحص متعدد الفريمات المعدل ---
 def scan_multi_timeframe_smc():
     price = get_live_price()
     if price is None:
@@ -232,11 +232,11 @@ def scan_multi_timeframe_smc():
         "signal": signal
     }
 
-# --- حساب الأهداف بناءً على فريم 30M (تم التعديل لضبط إدارة المخاطر بدقة) ---
-def calculate_trade_targets(price, tf30, signal_type):
+# --- حساب الأهداف ---
+def calculate_trade_targets(price, active_tf, signal_type):
     if "BUY" in signal_type:
-        # تحجيم الاستوب بحيث يكون منطقياً ولا يتجاوز 6.0$ من سعر الدخول
-        sl_raw = tf30['demand_low'] - 2.5 if tf30['demand_low'] > 0 else price - 5.0
+        d_low = active_tf['demand_low'] if active_tf['demand_low'] > 0 else price - 4.0
+        sl_raw = d_low - 2.5
         sl = round(max(sl_raw, price - 6.0), 2)
 
         risk = abs(price - sl) if abs(price - sl) >= 1.5 else 4.0
@@ -245,8 +245,8 @@ def calculate_trade_targets(price, tf30, signal_type):
         tp3 = round(price + (risk * 3.5), 2)
         return "BUY 🟢", sl, tp1, tp2, tp3
     else:
-        # تحجيم الاستوب لصفقات البيع بحيث لا يتجاوز 6.0$ فوق سعر الدخول
-        sl_raw = tf30['supply_high'] + 2.5 if tf30['supply_high'] > 0 else price + 5.0
+        s_high = active_tf['supply_high'] if active_tf['supply_high'] > 0 else price + 4.0
+        sl_raw = s_high + 2.5
         sl = round(min(sl_raw, price + 6.0), 2)
 
         risk = abs(sl - price) if abs(sl - price) >= 1.5 else 4.0
@@ -255,7 +255,7 @@ def calculate_trade_targets(price, tf30, signal_type):
         tp3 = round(price - (risk * 3.5), 2)
         return "SELL 🔴", sl, tp1, tp2, tp3
 
-# --- منبه الصفقات المطور المتوازن ---
+# --- منبه الصفقات المطور المتوازن مع اختيار الفريم المناسب ---
 def auto_alert_loop():
     last_alert_key = ""
     while True:
@@ -265,41 +265,48 @@ def auto_alert_loop():
                 res = scan_multi_timeframe_smc()
                 if res:
                     p = res['price']
-                    tf30 = res['30m']
+
+                    # التبديل التلقائي للفريم النشط في حال كانت مناطق 30M غير محددة
+                    active_tf = res['30m']
+                    if active_tf['demand_low'] == 0 and active_tf['supply_low'] == 0:
+                        if res['15m']['demand_low'] > 0 or res['15m']['supply_low'] > 0:
+                            active_tf = res['15m']
+                        elif res['1h']['demand_low'] > 0 or res['1h']['supply_low'] > 0:
+                            active_tf = res['1h']
 
                     is_alert = False
                     alert_type = ""
                     signal_type = "WAIT"
 
                     # 1. شرط شراء VIP معدل (منطقة الطلب / صيد السيولة)
-                    if (tf30['demand_high'] > 0 and (tf30['demand_low'] - 2.0) <= p <= (tf30['demand_high'] + 4.0)) or tf30['is_sweep']:
+                    if (active_tf['demand_high'] > 0 and (active_tf['demand_low'] - 3.0) <= p <= (active_tf['demand_high'] + 5.0)) or active_tf['is_sweep']:
                         is_alert = True
-                        alert_type = "🔥 **صفقة شراء VIP (منطقة طلب / صيد سيولة 30M)**"
+                        alert_type = "🔥 **صفقة شراء VIP (منطقة طلب / صيد سيولة معتمدة)**"
                         signal_type = "BUY"
 
                     # 2. شرط بيع VIP معدل (منطقة العرض)
-                    elif tf30['supply_low'] > 0 and (tf30['supply_low'] - 4.0) <= p <= (tf30['supply_high'] + 2.0):
+                    elif active_tf['supply_low'] > 0 and (active_tf['supply_low'] - 5.0) <= p <= (active_tf['supply_high'] + 3.0):
                         is_alert = True
-                        alert_type = "🔥 **صفقة بيع VIP (ملامسة منطقة العرض 30M)**"
+                        alert_type = "🔥 **صفقة بيع VIP (ملامسة منطقة العرض معتمدة)**"
                         signal_type = "SELL"
 
-                    # 3. إحاطة إضافية: بيع استمراري عند الهبوط القوي والزخم الحاد
-                    elif "SELL Strong" in res['signal'] and ("BEARISH" in tf30['trend'] or "Bearish FVG" in tf30['fvg']):
+                    # 3. صفقات استمرارية عند الاتجاه الهابط القوي
+                    elif "SELL Strong" in res['signal']:
                         is_alert = True
-                        alert_type = "⚡ **صفقة بيع استمرارية VIP (توافق هابط قوي / كسر هيكل 30M)**"
+                        alert_type = "⚡ **صفقة بيع استمرارية VIP (توافق اتجاه هابط قوي)**"
                         signal_type = "SELL"
 
-                    # 4. إحاطة إضافية: شراء استمراري عند الصعود القوي والزخم الحاد
-                    elif "BUY Strong" in res['signal'] and ("BULLISH" in tf30['trend'] or "Bullish FVG" in tf30['fvg']):
+                    # 4. صفقات استمرارية عند الاتجاه الصاعد القوي
+                    elif "BUY Strong" in res['signal']:
                         is_alert = True
-                        alert_type = "⚡ **صفقة شراء استمرارية VIP (توافق صاعد قوي / كسر هيكل 30M)**"
+                        alert_type = "⚡ **صفقة شراء استمرارية VIP (توافق اتجاه صاعد قوي)**"
                         signal_type = "BUY"
 
                     current_key = f"{signal_type}_{round(p, 0)}"
 
                     if is_alert and current_key != last_alert_key:
                         last_alert_key = current_key
-                        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, signal_type)
+                        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, signal_type)
 
                         alert_msg = (
                             f"🚨 **تنبيه صفقة VIP معتمدة (Spot Gold)!**\n"
@@ -354,22 +361,29 @@ def send_vip_trade(message):
         return
 
     p = res['price']
-    tf30 = res['30m']
 
-    if tf30['demand_low'] > 0 and p <= tf30['demand_high'] + 2.0:
-        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, "BUY")
-    elif tf30['supply_high'] > 0 and p >= tf30['supply_low'] - 2.0:
-        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, "SELL")
-    elif "SELL Strong" in res['signal'] and ("BEARISH" in tf30['trend'] or "Bearish FVG" in tf30['fvg']):
-        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, "SELL")
-    elif "BUY Strong" in res['signal'] and ("BULLISH" in tf30['trend'] or "Bullish FVG" in tf30['fvg']):
-        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, "BUY")
+    # اختيار الفريم الأكثر دقة للتوصية اليدوية
+    active_tf = res['30m']
+    if active_tf['demand_low'] == 0 and active_tf['supply_low'] == 0:
+        if res['15m']['demand_low'] > 0 or res['15m']['supply_low'] > 0:
+            active_tf = res['15m']
+        elif res['1h']['demand_low'] > 0 or res['1h']['supply_low'] > 0:
+            active_tf = res['1h']
+
+    if active_tf['demand_low'] > 0 and p <= active_tf['demand_high'] + 4.0:
+        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, "BUY")
+    elif active_tf['supply_high'] > 0 and p >= active_tf['supply_low'] - 4.0:
+        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, "SELL")
+    elif "BUY Strong" in res['signal']:
+        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, "BUY")
+    elif "SELL Strong" in res['signal']:
+        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, "SELL")
     else:
         trade_type = "WAIT"
 
     if "WAIT" in trade_type:
         msg = (
-            f"🔥 **توصية VIP بناءً على SMC (فريم 30M):**\n"
+            f"🔥 **توصية VIP بناءً على SMC:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"🎯 **حالة السوق:** `انتظار ⏳`\n"
             f"📍 **السعر اللحظي:** `{p}` $\n\n"
@@ -379,7 +393,7 @@ def send_vip_trade(message):
         )
     else:
         msg = (
-            f"🔥 **توصية VIP بناءً على SMC (فريم 30M):**\n"
+            f"🔥 **توصية VIP بناءً على SMC:**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"🎯 **نوع الصفقة:** `{trade_type}`\n"
             f"📍 **سعر الدخول اللحظي:** `{p}` $\n\n"
@@ -455,7 +469,7 @@ def send_alert_status(message):
     msg = (
         "🔔 **نظام التنبيهات التلقائي (SMC VIP):**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ **الحالة:** مُفعل بعد التحديث المطور.\n"
+        "✅ **الحالة:** مُفعل ومرن للغاية.\n"
         "⏱️ **معدل الفحص:** كل 20 ثانية.\n"
         "🎯 **الهدف:** رصد ملامسة مناطق الطلب/العرض الحقيقية وإشارات الاستمرار الهابطة/الصاعدة."
     )
