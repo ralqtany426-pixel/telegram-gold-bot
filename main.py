@@ -59,7 +59,7 @@ def get_live_price():
     except Exception:
         pass
 
-    return 4610.00  # قيمة احتياطية واقعية في حال انقطاع الـ API
+    return 4610.00
 
 def fetch_candles(interval='30m', period='5d'):
     try:
@@ -88,14 +88,9 @@ def analyze_market_structure(df):
     high_val = round(df['High'].max(), 2)
     low_val = round(df['Low'].min(), 2)
 
-    # تحديد قمم وقيعان هيكلية
-    df['Swing_High'] = df['High'][(df['High'] > df['High'].shift(1)) & (df['High'] > df['High'].shift(-1))]
-    df['Swing_Low'] = df['Low'][(df['Low'] < df['Low'].shift(1)) & (df['Low'] < df['Low'].shift(-1))]
-
     d_low, d_high = low_val, round(low_val + 6.0, 2)
     s_low, s_high = round(high_val - 6.0, 2), high_val
 
-    # استخراج أوردر بلوك (Order Block) حقيقي
     for i in range(len(df)-2, 0, -1):
         if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
             d_low, d_high = round(df['Low'].iloc[i], 2), round(df['High'].iloc[i], 2)
@@ -106,7 +101,6 @@ def analyze_market_structure(df):
             s_low, s_high = round(df['Low'].iloc[i], 2), round(df['High'].iloc[i], 2)
             break
 
-    # فحص الفجوات السعرية (Fair Value Gap - FVG)
     fvg = "لا توجد ⚪"
     for i in range(len(df)-1, 2, -1):
         if df['High'].iloc[i-2] < df['Low'].iloc[i]:
@@ -162,7 +156,7 @@ def calculate_targets(price, tf30, signal):
         risk = abs(sl - price)
         return "SELL 🔴", sl, round(price - (risk * 1.5), 2), round(price - (risk * 2.5), 2), round(price - (risk * 3.5), 2)
 
-# --- نظام التنبيهات المصلح ليعمل بانتظام وبدون توقف ---
+# --- نظام التنبيهات يعمل كل 5 دقائق ---
 def auto_alert_loop():
     last_signal_state = ""
     while True:
@@ -173,7 +167,6 @@ def auto_alert_loop():
                 p = data['price']
                 tf30 = data['30m']
                 
-                # تفعيل إرسال التنبيه بناءً على توافق الاتجاه واقتراب السعر بمرونة عالية
                 is_valid_opportunity = False
                 alert_title = ""
 
@@ -184,7 +177,7 @@ def auto_alert_loop():
                     is_valid_opportunity = True
                     alert_title = "🔥 **تنبيه صفقة بيع (VIP Supply Zone)**"
 
-                current_state = f"{data['signal']}_{round(p, -1)}" # يتغير بتغير النطاق السعري
+                current_state = f"{data['signal']}_{round(p, -1)}"
 
                 if is_valid_opportunity and current_state != last_signal_state:
                     last_signal_state = current_state
@@ -210,12 +203,11 @@ def auto_alert_loop():
         except Exception as e:
             print(f"Alert Error: {e}")
         
-,      # فحص السوق وإرسال التنبيهات كل 5 دقائق لضمان سرعة الاستجابة وعدم الانقطاع
         time.sleep(300)
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
-# --- واجهة أوامر البوت ---
+# --- أوامر واجهة البوت ---
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     add_user(message.chat.id)
