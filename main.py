@@ -294,14 +294,14 @@ def index():
     return "Bot is running with Webhook!", 200
 
 if __name__ == '__main__':
-    # إزالة أي Webhook قديم وربط الرابط الجديد تلقائياً مع رابط موقعك على Render
     bot.remove_webhook()
-    # ضع رابط مشروعك على Render هنا بدلاً من الـ URL المؤقت أو دعه يسحبه تلقائياً إذا رغبت،
-    # ولضمان العمل المباشر سنعتمد على تشغيل السيرفر ومنفذ Render:
+    
+    # ربط الويب هوك تلقائياً برابط المنصة الخارجي
+    render_url = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+    if render_url:
+        webhook_url = f"https://{render_url}/{TOKEN}"
+        bot.set_webhook(url=webhook_url)
+        print(f"Webhook successfully set to: {webhook_url}")
+        
     port = int(os.environ.get("PORT", 5000))
-    
-    # ملاحظة: لتحويل البوت ليعمل بنجاح تام، يفضل تفعيل الـ Webhook عبر رابط Render الخاص بك:
-    # app_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/{TOKEN}"
-    # bot.set_webhook(url=app_url)
-    
     app.run(host="0.0.0.0", port=port)
