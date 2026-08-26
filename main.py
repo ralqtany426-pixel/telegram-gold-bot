@@ -181,7 +181,7 @@ def analyze_timeframe(df, current_price=0):
         "is_sweep": is_sweep
     }
 
-# --- الفحص متعدد الفريمات (تم تحديث شرط الاتجاه هنا) ---
+# --- الفحص متعدد الفريمات مع دمج الزخم السريع لـ 15M ---
 def scan_multi_timeframe_smc():
     price = get_live_price()
     if price is None:
@@ -214,7 +214,6 @@ def scan_multi_timeframe_smc():
     bull_count = sum(1 for tf in timeframes if "BULLISH" in tf['trend'])
     bear_count = sum(1 for tf in timeframes if "BEARISH" in tf['trend'])
 
-    # --- التعديل الذكي لربط الاتجاه الكلي بالفريم اليومي و 1H ---
     if (tf_1d['trend'] == "BULLISH 🟢" and tf_1h['trend'] != "BEARISH 🔴") or bull_count >= 3:
         market_direction = "صاعد (الاتجاه العام يميل للشراء) 🟢🚀"
         signal = "BUY (بحث عن فرص شراء) 🚀"
@@ -225,9 +224,26 @@ def scan_multi_timeframe_smc():
         market_direction = "عرضي / محايد ⚪"
         signal = "WAIT ⏳ (تذبذب / انتظار)"
 
+    # --- فحص الزخم السريع لفريم 15M (مربوط باتجاه السوق العام لتجنب الإشارات الكاذبة) ---
+    quick_15m_signal = None
+    if not df_15m.empty and len(df_15m) >= 3:
+        last_close = df_15m['Close'].iloc[-1]
+        prev_close = df_15m['Close'].iloc[-2]
+        prev_open = df_15m['Open'].iloc[-2]
+        body_size = last_close - df_15m['Open'].iloc[-1]
+        prev_body = prev_close - prev_open
+
+        # إذا كانت الشمعة قوية هبوطياً والاتجاه العام يسمح بالبيع
+        if prev_body > 0 and body_size < -2.0 and "SELL" in signal:
+            quick_15m_signal = "SELL 🔴 (قنص هبوط سريع 15M)"
+        # إذا كانت الشمعة قوية صعودياً والاتجاه العام يسمح بالشراء
+        elif prev_body < 0 and body_size > 2.0 and "BUY" in signal:
+            quick_15m_signal = "BUY 🟢 (قنص صعود سريع 15M)"
+
     return {
         "price": price, 
         "market_direction": market_direction,
+        "quick_15m": quick_15m_signal,
         "15m": tf_15m, "30m": tf_30m, "1h": tf_1h, "4h": tf_4h, "1d": tf_1d, 
         "signal": signal
     }
@@ -235,7 +251,7 @@ def scan_multi_timeframe_smc():
 # --- اختيار الفريم النشط ---
 def select_active_timeframe(res, price):
     active_tf = res['30m']
-    
+
     if active_tf['demand_low'] == 0 and active_tf['supply_low'] == 0:
         if res['15m']['demand_low'] > 0 or res['15m']['supply_low'] > 0:
             active_tf = res['15m']
@@ -288,7 +304,13 @@ def auto_alert_loop():
                     alert_type = ""
                     signal_type = ""
 
-                    if (active_tf['demand_high'] > 0 and (active_tf['demand_low'] - 2.0) <= p <= (active_tf['demand_high'] + 3.0)) or active_tf['is_sweep']:
+                    # دمج شروط القنص السريع المحمي مع الشروط الأساسية
+                    if res.get('quick_15m'):
+                        is_alert = True
+                        signal_type = "BUY" if "BUY" in res['quick_15m'] else "SELL"
+                        alert_type = f"⚡ **{res['quick_15m']} (فرصة سريعة متوافقة مع الاتجاه)**"
+
+                    elif (active_tf['demand_high'] > 0 and (active_tf['demand_low'] - 2.0) <= p <= (active_tf['demand_high'] + 3.0)) or active_tf['is_sweep']:
                         is_alert = True
                         alert_type = "🔥 **صفقة شراء VIP (منطقة طلب / صيد سيولة معتمدة)**"
                         signal_type = "BUY"
@@ -308,12 +330,12 @@ def auto_alert_loop():
                         alert_type = "⚡ **صفقة بيع VIP (دخول من الفجوة السعرية Bearish FVG)**"
                         signal_type = "SELL"
 
-                    elif "BUY" in res['signal'] and "BUY" in res['signal']:
+                    elif "BUY" in res['signal']:
                         is_alert = True
                         alert_type = "⚡ **صفقة شراء استمرارية VIP (توافق اتجاه صاعد قوي)**"
                         signal_type = "BUY"
 
-                    elif "SELL" in res['signal'] and "SELL" in res['signal']:
+                    elif "SELL" in res['signal']:
                         is_alert = True
                         alert_type = "⚡ **صفقة بيع استمرارية VIP (توافق اتجاه هابط قوي)**"
                         signal_type = "SELL"
@@ -359,7 +381,7 @@ def start_cmd(message):
     btn_alerts = types.KeyboardButton("🔔 حالة التنبيهات")
     markup.add(btn_live, btn_vip, btn_sr, btn_gold, btn_alerts)
 
-    bot.send_message(message.chat.id, "مرحباً بك! تم تحديث الكود وتنسيق مؤشر الاتجاه العام بنجاح ⚡", reply_markup=markup)
+    bot.send_message(message.chat.id, "مرحباً بك! تم دمج ميزة قنص الفرص السريعة مع حماية الاتجاه بنجاح ⚡", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
@@ -379,7 +401,10 @@ def send_vip_trade(message):
     p = res['price']
     active_tf = select_active_timeframe(res, p)
 
-    if active_tf['demand_low'] > 0 and p <= active_tf['demand_high'] + 3.0:
+    if res.get('quick_15m'):
+        trade_type = "BUY 🟢" if "BUY" in res['quick_15m'] else "SELL 🔴"
+        _, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, trade_type)
+    elif active_tf['demand_low'] > 0 and p <= active_tf['demand_high'] + 3.0:
         trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, "BUY")
     elif active_tf['supply_high'] > 0 and p >= active_tf['supply_low'] - 3.0:
         trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, "SELL")
@@ -482,9 +507,9 @@ def send_alert_status(message):
     msg = (
         "🔔 **نظام التنبيهات التلقائي (SMC VIP):**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ **الحالة:** مُفعل ويعمل بدقة.\n"
+        "✅ **الحالة:** مُفعل ويعمل بدقة (مع فليتر الزخم السريع).\n"
         "⏱️ **معدل الفحص:** كل 20 ثانية.\n"
-        "🎯 **الهدف:** الطلب، العرض، صيد السيولة، و FVG."
+        "🎯 **الهدف:** الطلب، العرض، صيد السيولة، و FVG، وقنص الحركات السريعة."
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
