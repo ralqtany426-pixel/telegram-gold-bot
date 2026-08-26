@@ -86,7 +86,7 @@ def fetch_candles_yf(interval='30m', period='5d'):
 
     return pd.DataFrame()
 
-# --- خوارزمية تحليل هيكل السوق (المُصححة مع توسيع نطاق الطلب والعرض) ---
+# --- خوارزمية تحليل هيكل السوق ---
 def analyze_timeframe(df, current_price=0):
     if df.empty or len(df) < 5 or current_price == 0:
         return {
@@ -116,7 +116,7 @@ def analyze_timeframe(df, current_price=0):
     d_low, d_high = 0, 0
     s_low, s_high = 0, 0
 
-    # 1. البحث عن أقرب Order Block شرائي (توسيع نطاق المسافة إلى 60 دولار)
+    # 1. البحث عن أقرب Order Block شرائي
     for i in range(len(recent_df)-3, 1, -1):
         if recent_df['Close'].iloc[i] < recent_df['Open'].iloc[i]:
             if recent_df['Close'].iloc[i+1] > recent_df['Open'].iloc[i] or recent_df['Close'].iloc[i+2] > recent_df['High'].iloc[i]:
@@ -126,7 +126,7 @@ def analyze_timeframe(df, current_price=0):
                     d_low, d_high = c_low, c_high
                     break
 
-    # 2. البحث عن أقرب Order Block بيعي (توسيع نطاق المسافة إلى 60 دولار)
+    # 2. البحث عن أقرب Order Block بيعي
     for i in range(len(recent_df)-3, 1, -1):
         if recent_df['Close'].iloc[i] > recent_df['Open'].iloc[i]:
             if recent_df['Close'].iloc[i+1] < recent_df['Open'].iloc[i] or recent_df['Close'].iloc[i+2] < recent_df['Low'].iloc[i]:
@@ -181,7 +181,7 @@ def analyze_timeframe(df, current_price=0):
         "is_sweep": is_sweep
     }
 
-# --- الفحص متعدد الفريمات ---
+# --- الفحص متعدد الفريمات (تم تحديث شرط الاتجاه هنا) ---
 def scan_multi_timeframe_smc():
     price = get_live_price()
     if price is None:
@@ -211,16 +211,16 @@ def scan_multi_timeframe_smc():
     tf_1d  = analyze_timeframe(df_1d, price)
 
     timeframes = [tf_15m, tf_30m, tf_1h, tf_4h, tf_1d]
-
     bull_count = sum(1 for tf in timeframes if "BULLISH" in tf['trend'])
     bear_count = sum(1 for tf in timeframes if "BEARISH" in tf['trend'])
 
-    if bull_count >= 3:
-        market_direction = "صاعد قوي 🟢🚀"
-        signal = "BUY Strong 🚀 (توافق صاعد)"
-    elif bear_count >= 3:
-        market_direction = "هابط قوي 🔴📉"
-        signal = "SELL Strong 📉 (توافق هابط)"
+    # --- التعديل الذكي لربط الاتجاه الكلي بالفريم اليومي و 1H ---
+    if (tf_1d['trend'] == "BULLISH 🟢" and tf_1h['trend'] != "BEARISH 🔴") or bull_count >= 3:
+        market_direction = "صاعد (الاتجاه العام يميل للشراء) 🟢🚀"
+        signal = "BUY (بحث عن فرص شراء) 🚀"
+    elif (tf_1d['trend'] == "BEARISH 🔴" and tf_1h['trend'] != "BULLISH 🟢") or bear_count >= 3:
+        market_direction = "هابط (الاتجاه العام يميل للبيع) 🔴📉"
+        signal = "SELL (بحث عن فرص بيع) 📉"
     else:
         market_direction = "عرضي / محايد ⚪"
         signal = "WAIT ⏳ (تذبذب / انتظار)"
@@ -232,19 +232,16 @@ def scan_multi_timeframe_smc():
         "signal": signal
     }
 
-# --- اختيار الفريم النشط باحترافية ---
+# --- اختيار الفريم النشط ---
 def select_active_timeframe(res, price):
-    # الفحص الأولي من الـ 30M
     active_tf = res['30m']
     
-    # التبديل بين الـ 15M والـ 1H إذا لم تجد مناطق على 30M
     if active_tf['demand_low'] == 0 and active_tf['supply_low'] == 0:
         if res['15m']['demand_low'] > 0 or res['15m']['supply_low'] > 0:
             active_tf = res['15m']
         elif res['1h']['demand_low'] > 0 or res['1h']['supply_low'] > 0:
             active_tf = res['1h']
 
-    # إعطاء أولوية فورية لمناطق فريم 1H إذا كان السعر داخل حدودها اللحظية
     if res['1h']['demand_low'] > 0 and (res['1h']['demand_low'] - 2.0) <= price <= (res['1h']['demand_high'] + 2.0):
         active_tf = res['1h']
     elif res['1h']['supply_low'] > 0 and (res['1h']['supply_low'] - 2.0) <= price <= (res['1h']['supply_high'] + 2.0):
@@ -311,12 +308,12 @@ def auto_alert_loop():
                         alert_type = "⚡ **صفقة بيع VIP (دخول من الفجوة السعرية Bearish FVG)**"
                         signal_type = "SELL"
 
-                    elif "BUY Strong" in res['signal']:
+                    elif "BUY" in res['signal'] and "BUY" in res['signal']:
                         is_alert = True
                         alert_type = "⚡ **صفقة شراء استمرارية VIP (توافق اتجاه صاعد قوي)**"
                         signal_type = "BUY"
 
-                    elif "SELL Strong" in res['signal']:
+                    elif "SELL" in res['signal'] and "SELL" in res['signal']:
                         is_alert = True
                         alert_type = "⚡ **صفقة بيع استمرارية VIP (توافق اتجاه هابط قوي)**"
                         signal_type = "SELL"
@@ -362,7 +359,7 @@ def start_cmd(message):
     btn_alerts = types.KeyboardButton("🔔 حالة التنبيهات")
     markup.add(btn_live, btn_vip, btn_sr, btn_gold, btn_alerts)
 
-    bot.send_message(message.chat.id, "مرحباً بك! تم تحديث البوت وتفعيل التنبيهات مع إضافة الفجوات السعرية FVG ⚡", reply_markup=markup)
+    bot.send_message(message.chat.id, "مرحباً بك! تم تحديث الكود وتنسيق مؤشر الاتجاه العام بنجاح ⚡", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
@@ -390,9 +387,9 @@ def send_vip_trade(message):
         trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, "BUY")
     elif active_tf['fvg_type'] == "BEARISH" and active_tf['fvg_low'] <= p <= active_tf['fvg_high']:
         trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, "SELL")
-    elif "BUY Strong" in res['signal']:
+    elif "BUY" in res['signal']:
         trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, "BUY")
-    elif "SELL Strong" in res['signal']:
+    elif "SELL" in res['signal']:
         trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, active_tf, "SELL")
     else:
         trade_type = "WAIT"
