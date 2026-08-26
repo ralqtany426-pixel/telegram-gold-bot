@@ -189,7 +189,7 @@ def scan_multi_timeframe_smc():
     df_15m = fetch_candles_yf('15m', '2d')
     df_30m = fetch_candles_yf('30m', '3d')
     df_1h  = fetch_candles_yf('1h', '5d')
-    
+
     # جلب وتجميع فريم 4H الحقيقي بدقة من شمعات الساعة
     df_4h_raw = fetch_candles_yf('1h', '20d')
     if not df_4h_raw.empty:
@@ -265,17 +265,29 @@ def auto_alert_loop():
                     alert_type = ""
                     signal_type = "WAIT"
 
-                    # شرط شراء مرن (ملامسة الطلب أو كسر كاذب Liquidity Sweep)
+                    # 1. شرط شراء مرن (ملامسة الطلب أو كسر كاذب Liquidity Sweep)
                     if (tf30['demand_low'] > 0 and (tf30['demand_low'] - 3.0) <= p <= (tf30['demand_high'] + 2.0)) or tf30['is_sweep']:
                         is_alert = True
                         alert_type = "🔥 **صفقة شراء VIP (منطقة طلب / صيد سيولة 30M)**"
                         signal_type = "BUY"
 
-                    # شرط بيع مرن
+                    # 2. شرط بيع مرن (ملامسة منطقة العرض)
                     elif tf30['supply_high'] > 0 and (tf30['supply_low'] - 2.0) <= p <= (tf30['supply_high'] + 3.0):
                         is_alert = True
                         alert_type = "🔥 **صفقة بيع VIP (ملامسة منطقة العرض 30M)**"
                         signal_type = "SELL"
+
+                    # 3. إحاطة إضافية: بيع استمراري عند الهبوط القوي والزخم الحاد دون انتظر العرض
+                    elif "SELL Strong" in res['signal'] and ("BEARISH" in tf30['trend'] or "Bearish FVG" in tf30['fvg']):
+                        is_alert = True
+                        alert_type = "⚡ **صفقة بيع استمرارية VIP (توافق هابط قوي / كسر هيكل 30M)**"
+                        signal_type = "SELL"
+
+                    # 4. إحاطة إضافية: شراء استمراري عند الصعود القوي والزخم الحاد
+                    elif "BUY Strong" in res['signal'] and ("BULLISH" in tf30['trend'] or "Bullish FVG" in tf30['fvg']):
+                        is_alert = True
+                        alert_type = "⚡ **صفقة شراء استمرارية VIP (توافق صاعد قوي / كسر هيكل 30M)**"
+                        signal_type = "BUY"
 
                     current_key = f"{signal_type}_{round(p, 0)}"
 
@@ -337,11 +349,15 @@ def send_vip_trade(message):
 
     p = res['price']
     tf30 = res['30m']
-    
+
     if tf30['demand_low'] > 0 and p <= tf30['demand_high'] + 2.0:
         trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, "BUY")
     elif tf30['supply_high'] > 0 and p >= tf30['supply_low'] - 2.0:
         trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, "SELL")
+    elif "SELL Strong" in res['signal'] and ("BEARISH" in tf30['trend'] or "Bearish FVG" in tf30['fvg']):
+        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, "SELL")
+    elif "BUY Strong" in res['signal'] and ("BULLISH" in tf30['trend'] or "Bullish FVG" in tf30['fvg']):
+        trade_type, sl, tp1, tp2, tp3 = calculate_trade_targets(p, tf30, "BUY")
     else:
         trade_type = "WAIT"
 
@@ -435,7 +451,7 @@ def send_alert_status(message):
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "✅ **الحالة:** مُفعل بعد التحديث المطور.\n"
         "⏱️ **معدل الفحص:** كل 20 ثانية.\n"
-        "🎯 **الهدف:** رصد ملامسة مناطق الطلب الحقيقية واقتناص السيولة (Liquidity Sweeps)."
+        "🎯 **الهدف:** رصد ملامسة مناطق الطلب/العرض الحقيقية وإشارات الاستمرار الهابطة/الصاعدة."
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
