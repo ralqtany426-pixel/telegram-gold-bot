@@ -40,13 +40,11 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
-# متغيرات التخزين المؤقت (Cache) لمنع بطء الاتصال بالإنترنت عند الضغط المتكرر
 cached_price = 2650.00
 last_fetch_time = 0
 
 def get_live_price():
     global cached_price, last_fetch_time
-    # إذا مر أقل من 30 ثانية، استخدم السعر المخزن مؤقتاً لتكون الاستجابة فورية 100%
     if time.time() - last_fetch_time < 30 and cached_price > 0:
         return cached_price
 
@@ -81,7 +79,7 @@ def check_triple_bottom(df):
     for i in range(2, len(lows) - 2):
         if lows[i] <= lows[i-1] and lows[i] <= lows[i-2] and lows[i] <= lows[i+1] and lows[i] <= lows[i+2]:
             local_bottoms.append((i, lows[i]))
-            
+
     if len(local_bottoms) >= 3:
         b1, b2, b3 = local_bottoms[-3][1], local_bottoms[-2][1], local_bottoms[-1][1]
         if abs(b1 - b2) <= 6.0 and abs(b2 - b3) <= 6.0:
@@ -97,7 +95,7 @@ def analyze_market_structure(df):
     high_val = round(df['High'].max(), 2)
     low_val = round(df['Low'].min(), 2)
     d_low, d_high = low_val, round(low_val + 10.0, 2)
-    
+
     for i in range(len(df)-2, 0, -1):
         if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
             d_low, d_high = round(df['Low'].iloc[i], 2), round(df['High'].iloc[i], 2)
@@ -130,7 +128,7 @@ def auto_alert_loop():
                 p = get_live_price()
                 df = fetch_candles('30m', '3d')
                 tf30 = analyze_market_structure(df)
-                
+
                 d_low = tf30['demand_low']
                 d_high = tf30['demand_high']
                 has_triple_bottom = tf30['triple_bottom']
@@ -176,7 +174,7 @@ def auto_alert_loop():
                             pass
         except Exception:
             pass
-        
+
         time.sleep(300)
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
@@ -277,6 +275,10 @@ def webhook():
 @app.route('/')
 def index():
     return "Bot is running fast with Cache & Webhook!", 200
+
+@app.route('/ping')
+def ping():
+    return "Pong", 200
 
 if __name__ == '__main__':
     bot.remove_webhook()
