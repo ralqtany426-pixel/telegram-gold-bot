@@ -71,52 +71,61 @@ def fetch_candles(interval='30m', period='3d'):
         pass
     return pd.DataFrame()
 
-def check_triple_bottom(df):
-    if df.empty or len(df) < 10:
-        return False, 0
-    lows = df['Low'].values
-    local_bottoms = []
-    for i in range(2, len(lows) - 2):
-        if lows[i] <= lows[i-1] and lows[i] <= lows[i-2] and lows[i] <= lows[i+1] and lows[i] <= lows[i+2]:
-            local_bottoms.append((i, lows[i]))
-
-    if len(local_bottoms) >= 3:
-        b1, b2, b3 = local_bottoms[-3][1], local_bottoms[-2][1], local_bottoms[-1][1]
-        if abs(b1 - b2) <= 6.0 and abs(b2 - b3) <= 6.0:
-            return True, round(b3, 2)
-    return False, 0
-
 def analyze_market_structure(df):
-    if df.empty or len(df) < 5:
+    if df.empty or len(df) < 10:
         return {
-            "demand_low": 2640, "demand_high": 2650, "fvg": "لا توجد ⚪", "triple_bottom": False
+            "demand_low": 2640, "demand_high": 2650,
+            "supply_low": 2660, "supply_high": 2670,
+            "trend": "NEUTRAL"
         }
 
-    high_val = round(df['High'].max(), 2)
     low_val = round(df['Low'].min(), 2)
+    high_val = round(df['High'].max(), 2)
+    
     d_low, d_high = low_val, round(low_val + 10.0, 2)
+    s_low, s_high = round(high_val - 10.0, 2), high_val
 
+    # البحث عن أوردر بلوك شرائي (منطقة طلب) و بيعي (منطقة عرض)
     for i in range(len(df)-2, 0, -1):
+        # طلب (Demand OB)
         if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
             d_low, d_high = round(df['Low'].iloc[i], 2), round(df['High'].iloc[i], 2)
-            break
+        # عرض (Supply OB)
+        if df['Close'].iloc[i] > df['Open'].iloc[i] and df['Close'].iloc[i+1] < df['Low'].iloc[i]:
+            s_low, s_high = round(df['Low'].iloc[i], 2), round(df['High'].iloc[i], 2)
 
-    has_tb, tb_price = check_triple_bottom(df)
+    # تحديد الاتجاه البسيط بناءً على الإغلاق الأخير مقارنة بمنتصف النطاق
+    last_close = df['Close'].iloc[-1]
+    prev_close = df['Close'].iloc[-3]
+    trend = "BUY" if last_close > prev_close else "SELL"
+
     return {
-        "demand": f"🟢 منطقة طلب / أوردر بلوك ({d_low} - {d_high})",
+        "demand": f"🟢 منطقة طلب (Demand): ({d_low} - {d_high})",
+        "supply": f"🔴 منطقة عرض (Supply): ({s_low} - {s_high})",
         "demand_low": d_low, "demand_high": d_high,
-        "triple_bottom": has_tb, "tb_price": tb_price
+        "supply_low": s_low, "supply_high": s_high,
+        "trend": trend
     }
 
-def calculate_targets(price):
+def calculate_targets(price, signal_type):
     entry = price
-    sl = round(entry - 10.0, 2)  
-    risk = abs(entry - sl)
-    tp1 = round(entry + (risk * 1.5), 2)  
-    tp2 = round(entry + (risk * 2.5), 2)  
-    tp3 = round(entry + (risk * 3.5), 2)  
+    if signal_type == "BUY":
+        sl = round(entry - 12.0, 2)  
+        risk = abs(entry - sl)
+        tp1 = round(entry + (risk * 1.5), 2)  
+        tp2 = round(entry + (risk * 2.5), 2)  
+        tp3 = round(entry + (risk * 3.5), 2)  
+        t_label = "BUY 🟢 (شراء)"
+    else:
+        sl = round(entry + 12.0, 2)  
+        risk = abs(sl - entry)
+        tp1 = round(entry - (risk * 1.5), 2)  
+        tp2 = round(entry - (risk * 2.5), 2)  
+        tp3 = round(entry - (risk * 3.5), 2)  
+        t_label = "SELL 🔴 (بيع)"
+        
     rr_ratio = "1 : 3.5"
-    return "BUY 🟢 (شراء فقط)", entry, sl, tp1, tp2, tp3, rr_ratio
+    return t_label, entry, sl, tp1, tp2, tp3, rr_ratio
 
 def auto_alert_loop():
     time.sleep(15)
@@ -127,40 +136,41 @@ def auto_alert_loop():
             if users:
                 p = get_live_price()
                 df = fetch_candles('30m', '3d')
-                tf30 = analyze_market_structure(df)
+                market = analyze_market_structure(df)
 
-                d_low = tf30['demand_low']
-                d_high = tf30['demand_high']
-                has_triple_bottom = tf30['triple_bottom']
-                is_at_order_block = (d_low - 3.0) <= p <= (d_high + 5.0)
+                d_low, d_high = market['demand_low'], market['demand_high']
+                s_low, s_high = market['supply_low'], market['supply_high']
+                
+                is_at_demand = (d_low - 3.0) <= p <= (d_high + 3.0)
+                is_at_supply = (s_low - 3.0) <= p <= (s_high + 3.0)
 
                 alert_msg = ""
                 current_state = ""
 
-                if has_triple_bottom:
-                    current_state = f"TRIPLE_BOTTOM_{round(p, -1)}"
+                if is_at_demand:
+                    current_state = f"BUY_OB_{round(p, -1)}"
                     if current_state != last_alert_type:
                         last_alert_type = current_state
-                        t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p)
+                        t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p, "BUY")
                         alert_msg = (
-                            f"🚀🔥 **[ نموذج انعكاسي إيجابي: تكوّن ثلاث قيعان (Triple Bottom) ]** 🔥🚀\n"
+                            f"🚀 **[ فرصـة صـفقة شـراء (BUY) - SMC ]** 🚀\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📈 **السوق يشكل نموذج القيعان الثلاثة الصاعد!**\n"
-                            f"📍 **سعر الدخول المقترح:** `{entry}` $\n"
+                            f"📍 **السعر الحالي:** `{p}` $\n"
+                            f"🧱 **منطقة الطلب:** `{d_low} - {d_high}` $\n"
                             f"🛑 **وقف الخسارة:** `{sl}` $\n"
                             f"🎯 **الأهداف:** TP1: `{tp1}` | TP2: `{tp2}` | TP3: `{tp3}`\n"
                             f"━━━━━━━━━━━━━━━━━━━━━"
                         )
-                elif is_at_order_block:
-                    current_state = f"ORDER_BLOCK_{round(p, -1)}"
+                elif is_at_supply:
+                    current_state = f"SELL_OB_{round(p, -1)}"
                     if current_state != last_alert_type:
                         last_alert_type = current_state
-                        t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p)
+                        t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p, "SELL")
                         alert_msg = (
-                            f"🚨 **[ تنبيه هام: وصول الذهب لمنطقة الأوردر بلوك ]** 🚨\n"
+                            f"📉 **[ فرصـة صـفقة بيـع (SELL) - SMC ]** 📉\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n"
                             f"📍 **السعر الحالي:** `{p}` $\n"
-                            f"🧱 **نطاق الطلب:** `{d_low} - {d_high}` $\n"
+                            f"🧱 **منطقة العرض:** `{s_low} - {s_high}` $\n"
                             f"🛑 **وقف الخسارة:** `{sl}` $\n"
                             f"🎯 **الأهداف:** TP1: `{tp1}` | TP2: `{tp2}` | TP3: `{tp3}`\n"
                             f"━━━━━━━━━━━━━━━━━━━━━"
@@ -185,24 +195,30 @@ def start_cmd(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
         types.KeyboardButton("⚡ السعر اللحظي"),
-        types.KeyboardButton("🔥 صفقة شراء VIP حالية"),
-        types.KeyboardButton("📊 الدعم والمقاومة"),
+        types.KeyboardButton("🔥 صفقة VIP حالية"),
+        types.KeyboardButton("📊 مناطق العرض والطلب"),
         types.KeyboardButton("تحليل الذهب 🥇"),
         types.KeyboardButton("🔔 اختبار إرسال تنبيه الآن")
     )
-    bot.send_message(message.chat.id, "👑 أهلاً بك. تم تحسين سرعة استجابة الأزرار لتكون فورية 🚀", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 أهلاً بك. تم تحديث البوت ليدعم صفقات البيع والشراء (SMC) 🚀", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
     p = get_live_price()
     bot.send_message(message.chat.id, f"⚡ **سعر الذهب العالمي المباشر (Spot XAU/USD):** `{p}` $ 🏆", parse_mode="Markdown")
 
-@bot.message_handler(func=lambda m: m.text == "🔥 صفقة شراء VIP حالية")
+@bot.message_handler(func=lambda m: m.text == "🔥 صفقة VIP حالية")
 def send_vip_trade(message):
     p = get_live_price()
-    t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p)
+    df = fetch_candles('30m', '3d')
+    market = analyze_market_structure(df)
+    
+    # اختيار نوع الصفقة بناءً على اتجاه السوق الحالي أو الأقرب للمنطقة
+    signal_type = market['trend']
+    t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p, signal_type)
+    
     msg = (
-        f"💎 **[ توصية شراء VIP الاحترافية - SMC ]** 💎\n"
+        f"💎 **[ توصية VIP الاحترافية - SMC ]** 💎\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 **الصفقة المقترحة:** `{t_type}`\n"
         f"📍 **سعر الدخول الموصى به:** `{entry}` $\n"
@@ -215,15 +231,17 @@ def send_vip_trade(message):
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-@bot.message_handler(func=lambda m: m.text == "📊 الدعم والمقاومة")
+@bot.message_handler(func=lambda m: m.text == "📊 مناطق العرض والطلب")
 def send_support_resistance(message):
     p = get_live_price()
+    df = fetch_candles('30m', '3d')
+    market = analyze_market_structure(df)
     msg = (
-        f"📊 **مستويات السيولة والدعم والمقاومة:**\n"
+        f"📊 **مستويات العرض والطلب (Smart Money):**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 **السعر الحالي:** `{p}` $\n"
-        f"🔴 **مقاومة رئيسية (R1):** `{round(p + 15, 2)}` $\n"
-        f"🟢 **دعم رئيسي / أوردر بلوك (S1):** `{round(p - 15, 2)}` $\n"
+        f"{market['supply']}\n"
+        f"{market['demand']}\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
@@ -233,15 +251,14 @@ def handle_gold_analysis(message):
     add_user(message.chat.id)
     p = get_live_price()
     df = fetch_candles('30m', '3d')
-    tf30 = analyze_market_structure(df)
-    tb_status = "مكوّن ورصد بنجاح 🚀" if tf30['triple_bottom'] else "غير متكون حالياً ⚪"
+    market = analyze_market_structure(df)
     msg = (
-        f"👑 **التقرير الفني الشامل (أسرع وأدق)** 👑\n"
+        f"👑 **التقرير الفني الشامل (بيع وشراء)** 👑\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 **السعر اللحظي:** `{p}` $\n"
-        f"⚡ **الاتجاه العام:** `BUY Only (صاعد)`\n"
-        f"🔹 **نموذج القيعان الثلاثة:** `{tb_status}`\n"
-        f"🔹 **30 دقيقة:** {tf30['demand']}\n"
+        f"⚡ **الاتجاه المسيطر:** `{market['trend']}`\n"
+        f"🔹 {market['supply']}\n"
+        f"🔹 {market['demand']}\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
@@ -250,7 +267,7 @@ def handle_gold_analysis(message):
 def test_alert_btn(message):
     add_user(message.chat.id)
     p = get_live_price()
-    t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p)
+    t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p, "BUY")
     msg = (
         f"🧪 **[ اختبار نظام التنبيهات الفوري ]** 🧪\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -274,11 +291,7 @@ def webhook():
 
 @app.route('/')
 def index():
-    return "Bot is running fast with Cache & Webhook!", 200
-
-@app.route('/ping')
-def ping():
-    return "Pong", 200
+    return "Bot is running with Buy & Sell SMC logic!", 200
 
 if __name__ == '__main__':
     bot.remove_webhook()
@@ -286,7 +299,6 @@ if __name__ == '__main__':
     if render_url:
         webhook_url = f"https://{render_url}/{TOKEN}"
         bot.set_webhook(url=webhook_url)
-        print(f"Webhook successfully set to: {webhook_url}")
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
