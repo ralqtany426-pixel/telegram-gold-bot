@@ -47,7 +47,7 @@ def fetch_candles(interval='30m', period='3d'):
     try:
         ticker = yf.Ticker("GC=F")
         df = ticker.history(period=period, interval=interval)
-        if not df.empty and len(df) >= 5:
+        if not df.empty and len(df) >= 10:
             df = df[['Open', 'High', 'Low', 'Close']].astype(float)
             return df
     except Exception:
@@ -61,7 +61,7 @@ def get_live_price():
 
     try:
         url = "https://api.gold-api.com/price/XAU"
-        res = requests.get(url, headers=HEADERS, timeout=2).json()
+        res = requests.get(url, headers=HEADERS, timeout=3).json()
         if 'price' in res and res['price']:
             cached_price = round(float(res['price']), 2)
             last_fetch_time = time.time()
@@ -69,7 +69,6 @@ def get_live_price():
     except Exception:
         pass
 
-    # المصدر الاحتياطي: استخدام آخر سعر مغلق من yfinance في حال تعطل المصدر الأساسي
     try:
         df_fallback = fetch_candles(interval='1m', period='1d')
         if not df_fallback.empty:
@@ -81,102 +80,96 @@ def get_live_price():
 
     return cached_price if cached_price > 0 else 2650.00
 
-def analyze_market_structure(df):
-    if df.empty or len(df) < 10:
+def analyze_smc_liquidity(df):
+    if df.empty or len(df) < 15:
         return {
             "demand_low": 2640, "demand_high": 2650,
             "supply_low": 2660, "supply_high": 2670,
-            "trend": "NEUTRAL"
+            "trend": "NEUTRAL", "sweep_status": "لا توجد سيولة مسحوبة حالياً"
         }
+
+    # تحديد أحدث قمة وقاع للسيولة (Liquidity Pools)
+    recent_high = round(df['High'].iloc[-10:-2].max(), 2)
+    recent_low = round(df['Low'].iloc[-10:-2].min(), 2)
+    
+    current_high = df['High'].iloc[-1]
+    current_low = df['Low'].iloc[-1]
+    last_close = df['Close'].iloc[-1]
+    prev_close = df['Close'].iloc[-2]
 
     low_val = round(df['Low'].min(), 2)
     high_val = round(df['High'].max(), 2)
-
     d_low, d_high = low_val, round(low_val + 10.0, 2)
     s_low, s_high = round(high_val - 10.0, 2), high_val
 
-    for i in range(len(df)-2, 0, -1):
-        if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['High'].iloc[i]:
-            d_low, d_high = round(df['Low'].iloc[i], 2), round(df['High'].iloc[i], 2)
-        if df['Close'].iloc[i] > df['Open'].iloc[i] and df['Close'].iloc[i+1] < df['Low'].iloc[i]:
-            s_low, s_high = round(df['Low'].iloc[i], 2), round(df['High'].iloc[i], 2)
+    sweep_status = "استقرار في حركة الأسعار داخل النطاق"
+    trend = "NEUTRAL"
 
-    last_close = df['Close'].iloc[-1]
-    prev_close = df['Close'].iloc[-3]
-    trend = "BUY" if last_close > prev_close else "SELL"
+    # كشف الـ Buy-Side Liquidity Sweep (اختراق القمة ثم الرفض للهبوط)
+    if current_high > recent_high and last_close < recent_high:
+        sweep_status = f"🔴 تم سحب سيولة الشراء (Buy-Side Sweep) فوق القمة {recent_high}"
+        trend = "SELL"
+    # كشف الـ Sell-Side Liquidity Sweep (اختراق القاع ثم الصعود)
+    elif current_low < recent_low and last_close > recent_low:
+        sweep_status = f"🟢 تم سحب سيولة البيع (Sell-Side Sweep) تحت القاع {recent_low}"
+        trend = "BUY"
+    else:
+        trend = "BUY" if last_close > prev_close else "SELL"
 
     return {
         "demand": f"🟢 منطقة طلب (Demand): ({d_low} - {d_high})",
         "supply": f"🔴 منطقة عرض (Supply): ({s_low} - {s_high})",
         "demand_low": d_low, "demand_high": d_high,
         "supply_low": s_low, "supply_high": s_high,
-        "trend": trend
+        "trend": trend,
+        "sweep_status": sweep_status
     }
 
 def calculate_targets(price, signal_type):
     entry = price
     if signal_type == "BUY":
-        sl = round(entry - 12.0, 2)  
+        sl = round(entry - 10.0, 2)  
         risk = abs(entry - sl)
         tp1 = round(entry + (risk * 1.5), 2)  
         tp2 = round(entry + (risk * 2.5), 2)  
         tp3 = round(entry + (risk * 3.5), 2)  
-        t_label = "BUY 🟢 (شراء)"
+        t_label = "BUY 🟢 (شراء بعد سحب السيولة)"
     else:
-        sl = round(entry + 12.0, 2)  
+        sl = round(entry + 10.0, 2)  
         risk = abs(sl - entry)
         tp1 = round(entry - (risk * 1.5), 2)  
         tp2 = round(entry - (risk * 2.5), 2)  
         tp3 = round(entry - (risk * 3.5), 2)  
-        t_label = "SELL 🔴 (بيع)"
+        t_label = "SELL 🔴 (بيع بعد سحب السيولة)"
 
     rr_ratio = "1 : 3.5"
     return t_label, entry, sl, tp1, tp2, tp3, rr_ratio
 
 def auto_alert_loop():
-    time.sleep(15)
-    last_alert_type = ""
+    time.sleep(20)
+    last_alert_state = ""
     while True:
         try:
             users = get_all_users()
             if users:
                 p = get_live_price()
                 df = fetch_candles('30m', '3d')
-                market = analyze_market_structure(df)
-
-                d_low, d_high = market['demand_low'], market['demand_high']
-                s_low, s_high = market['supply_low'], market['supply_high']
-
-                is_at_demand = (d_low - 3.0) <= p <= (d_high + 3.0)
-                is_at_supply = (s_low - 3.0) <= p <= (s_high + 3.0)
+                market = analyze_smc_liquidity(df)
 
                 alert_msg = ""
                 current_state = ""
 
-                if is_at_demand:
-                    current_state = f"BUY_OB_{round(p, -1)}"
-                    if current_state != last_alert_type:
-                        last_alert_type = current_state
-                        t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p, "BUY")
+                if "Sweep" in market['sweep_status']:
+                    current_state = f"SWEEP_{int(p // 3)}"
+                    if current_state != last_alert_state:
+                        last_alert_state = current_state
+                        t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p, market['trend'])
                         alert_msg = (
-                            f"🚀 **[ فرصـة صـفقة شـراء (BUY) - SMC ]** 🚀\n"
+                            f"⚡ **[ تنبيه سيولة مؤكد - SMC Sweep ]** ⚡\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"🔍 **الحالة:** `{market['sweep_status']}`\n"
                             f"📍 **السعر الحالي:** `{p}` $\n"
-                            f"🧱 **منطقة الطلب:** `{d_low} - {d_high}` $\n"
-                            f"🛑 **وقف الخسارة:** `{sl}` $\n"
-                            f"🎯 **الأهداف:** TP1: `{tp1}` | TP2: `{tp2}` | TP3: `{tp3}`\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━"
-                        )
-                elif is_at_supply:
-                    current_state = f"SELL_OB_{round(p, -1)}"
-                    if current_state != last_alert_type:
-                        last_alert_type = current_state
-                        t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p, "SELL")
-                        alert_msg = (
-                            f"📉 **[ فرصـة صـفقة بيـع (SELL) - SMC ]** 📉\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📍 **السعر الحالي:** `{p}` $\n"
-                            f"🧱 **منطقة العرض:** `{s_low} - {s_high}` $\n"
+                            f"🎯 **التوصية:** `{t_type}`\n"
                             f"🛑 **وقف الخسارة:** `{sl}` $\n"
                             f"🎯 **الأهداف:** TP1: `{tp1}` | TP2: `{tp2}` | TP3: `{tp3}`\n"
                             f"━━━━━━━━━━━━━━━━━━━━━"
@@ -202,11 +195,11 @@ def start_cmd(message):
     markup.add(
         types.KeyboardButton("⚡ السعر اللحظي"),
         types.KeyboardButton("🔥 صفقة VIP حالية"),
-        types.KeyboardButton("📊 مناطق العرض والطلب"),
+        types.KeyboardButton("📊 حالة السيولة والـ Sweep"),
         types.KeyboardButton("تحليل الذهب 🥇"),
         types.KeyboardButton("🔔 اختبار إرسال تنبيه الآن")
     )
-    bot.send_message(message.chat.id, "👑 أهلاً بك. تم تحديث البوت ليدعم صفقات البيع والشراء (SMC) مع نظام الحماية البديل 🚀", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 أهلاً بك. تم تطوير البوت ليدعم تحليل سحب السيولة (Liquidity Sweep) لتعزيز دقة صفقات الذهب 🚀", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
@@ -217,8 +210,7 @@ def send_live_price(message):
 def send_vip_trade(message):
     p = get_live_price()
     df = fetch_candles('30m', '3d')
-    market = analyze_market_structure(df)
-
+    market = analyze_smc_liquidity(df)
     signal_type = market['trend']
     t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p, signal_type)
 
@@ -236,15 +228,16 @@ def send_vip_trade(message):
     )
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-@bot.message_handler(func=lambda m: m.text == "📊 مناطق العرض والطلب")
-def send_support_resistance(message):
+@bot.message_handler(func=lambda m: m.text == "📊 حالة السيولة والـ Sweep")
+def send_liquidity_status(message):
     p = get_live_price()
     df = fetch_candles('30m', '3d')
-    market = analyze_market_structure(df)
+    market = analyze_smc_liquidity(df)
     msg = (
-        f"📊 **مستويات العرض والطلب (Smart Money):**\n"
+        f"📊 **مراقبة السيولة الذكية (Liquidity Map):**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 **السعر الحالي:** `{p}` $\n"
+        f"🔍 **حالة الـ Sweep:** \n`{market['sweep_status']}`\n"
         f"{market['supply']}\n"
         f"{market['demand']}\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
@@ -256,12 +249,12 @@ def handle_gold_analysis(message):
     add_user(message.chat.id)
     p = get_live_price()
     df = fetch_candles('30m', '3d')
-    market = analyze_market_structure(df)
+    market = analyze_smc_liquidity(df)
     msg = (
-        f"👑 **التقرير الفني الشامل (بيع وشراء)** 👑\n"
+        f"👑 **التقرير الفني الشامل (SMC & Sweep)** 👑\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 **السعر اللحظي:** `{p}` $\n"
-        f"⚡ **الاتجاه المسيطر:** `{market['trend']}`\n"
+        f"⚡ **الحالة الفنية:** `{market['sweep_status']}`\n"
         f"🔹 {market['supply']}\n"
         f"🔹 {market['demand']}\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
@@ -272,11 +265,11 @@ def handle_gold_analysis(message):
 def test_alert_btn(message):
     add_user(message.chat.id)
     p = get_live_price()
-    t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p, "BUY")
+    _, entry, sl, tp1, tp2, tp3, _ = calculate_targets(p, "BUY")
     msg = (
         f"🧪 **[ اختبار نظام التنبيهات الفوري ]** 🧪\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🚀 **تنبيه تجريبي ناجح:**\n"
+        f"🚀 **تنبيه تجريبي ناجح (Liquidity Test):**\n"
         f"📍 **السعر الحالي:** `{entry}` $\n"
         f"🛑 **وقف الخسارة:** `{sl}` $\n"
         f"🎯 **الأهداف:** TP1: `{tp1}` | TP2: `{tp2}` | TP3: `{tp3}`\n"
@@ -296,7 +289,7 @@ def webhook():
 
 @app.route('/')
 def index():
-    return "Bot is running with robust price fallbacks and SMC logic!", 200
+    return "Bot is running with Liquidity Sweep SMC logic!", 200
 
 if __name__ == '__main__':
     bot.remove_webhook()
