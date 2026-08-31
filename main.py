@@ -88,8 +88,9 @@ def analyze_smc_advanced(df):
             "trend": "NEUTRAL", "status": "جاري تحليل الهيكل والسيولة..."
         }
 
-    recent_high = round(df['High'].iloc[-12:-3].max(), 2)
-    recent_low = round(df['Low'].iloc[-12:-3].min(), 2)
+    # التعديل هنا: تحديد الهاي واللو الهيكلي بدقة من النطاق المحدد
+    recent_high = round(df['High'].iloc[-20:-3].max(), 2)
+    recent_low = round(df['Low'].iloc[-20:-3].min(), 2)
 
     current_high = df['High'].iloc[-1]
     current_low = df['Low'].iloc[-1]
@@ -159,7 +160,7 @@ def calculate_targets(price, signal_type):
     return t_label, entry, sl, tp1, tp2, tp3, rr_ratio
 
 def auto_alert_loop():
-    time.sleep(10)  # انتظار قصير عند بدء التشغيل
+    time.sleep(10)
     last_alert_state = ""
     while True:
         try:
@@ -197,7 +198,6 @@ def auto_alert_loop():
         except Exception:
             pass
 
-        # فحص السوق كل 30 ثانية لتسريع وصول التنبيهات
         time.sleep(30)
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
@@ -213,7 +213,7 @@ def start_cmd(message):
         types.KeyboardButton("تحليل الذهب 🥇"),
         types.KeyboardButton("🔔 اختبار إرسال تنبيه الآن")
     )
-    bot.send_message(message.chat.id, "👑 أهلاً بك. تم دمج فلترة الـ Sweep مع فجوات القيمة العادلة (FVG) وتغير الهيكل (CHoCH) بنجاح 🚀", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 أهلاً بك. تم تعديل واحتساب الهاي واللو الهيكلي بنجاح 🚀", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "⚡ السعر اللحظي")
 def send_live_price(message):
@@ -303,7 +303,7 @@ def webhook():
 
 @app.route('/')
 def index():
-    return "Bot is running with full SMC Sweep, FVG and CHoCH logic!", 200
+    return "Bot is running with updated structural High/Low logic!", 200
 
 if __name__ == '__main__':
     bot.remove_webhook()
