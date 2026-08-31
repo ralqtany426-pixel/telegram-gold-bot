@@ -90,11 +90,11 @@ def analyze_smc_advanced(df):
 
     recent_high = round(df['High'].iloc[-12:-3].max(), 2)
     recent_low = round(df['Low'].iloc[-12:-3].min(), 2)
-    
+
     current_high = df['High'].iloc[-1]
     current_low = df['Low'].iloc[-1]
     last_close = df['Close'].iloc[-1]
-    
+
     low_val = round(df['Low'].min(), 2)
     high_val = round(df['High'].max(), 2)
     d_low, d_high = low_val, round(low_val + 10.0, 2)
@@ -159,7 +159,7 @@ def calculate_targets(price, signal_type):
     return t_label, entry, sl, tp1, tp2, tp3, rr_ratio
 
 def auto_alert_loop():
-    time.sleep(20)
+    time.sleep(10)  # انتظار قصير عند بدء التشغيل
     last_alert_state = ""
     while True:
         try:
@@ -173,7 +173,7 @@ def auto_alert_loop():
                 current_state = ""
 
                 if "تأكيد" in market['status']:
-                    current_state = f"ADV_{int(p // 3)}"
+                    current_state = f"{market['trend']}_{int(p)}"
                     if current_state != last_alert_state:
                         last_alert_state = current_state
                         t_type, entry, sl, tp1, tp2, tp3, rr = calculate_targets(p, market['trend'])
@@ -197,7 +197,8 @@ def auto_alert_loop():
         except Exception:
             pass
 
-        time.sleep(300)
+        # فحص السوق كل 30 ثانية لتسريع وصول التنبيهات
+        time.sleep(30)
 
 threading.Thread(target=auto_alert_loop, daemon=True).start()
 
